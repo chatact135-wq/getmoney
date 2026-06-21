@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trading Journal</title>
+    <style>
+        body { font-family: 'Segoe UI', Arial, sans-serif; background: #0e1118; color: #ffffff; margin: 0; padding: 20px; }
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #232d3f; padding-bottom: 15px; margin-bottom: 20px;}
+        .nav-btn { background: #1f293d; border: none; color: white; padding: 10px 20px; cursor: pointer; border-radius: 5px; text-decoration: none;}
+        table { width: 100%; border-collapse: collapse; background: #161c2a; border-radius: 8px; overflow: hidden;}
+        th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #232d3f; }
+        th { background-color: #1f293d; color: #a0aec0; }
+        .BUY { color: #00e676; font-weight: bold; }
+        .SELL { color: #ff1744; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h2>TRADING JOURNAL</h2>
+        <a href="/" class="nav-btn">Back to Dashboard</a>
+    </div>
+    <table>
+        <thead>
+            <tr>
+                <th>Time (UTC)</th>
+                <th>Pair</th>
+                <th>Action</th>
+                <th>Entry Price</th>
+                <th>Take Profit</th>
+                <th>Stop Loss</th>
+                <th>Reason</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for trade in trades %}
+            <tr>
+                <td>{{ trade.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                <td>{{ trade.pair }}</td>
+                <td class="{{ trade.action }}">{{ trade.action }}</td>
+                <td>{{ trade.entry_price }}</td>
+                <td style="color:#00e676;">{{ trade.take_profit }}</td>
+                <td style="color:#ff1744;">{{ trade.stop_loss }}</td>
+                <td>{{ trade.reason }}</td>
+            </tr>
+            {% else %}
+            <tr><td colspan="7" style="text-align: center;">No trades recorded yet. The system is waiting for the next signal.</td></tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</body>
+</html>

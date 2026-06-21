@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Algorithmic Trading Signals</title>
+    <style>
+        body { font-family: 'Segoe UI', Arial, sans-serif; background: #0e1118; color: #ffffff; margin: 0; padding: 20px; }
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #232d3f; padding-bottom: 15px; }
+        .nav-btn { background: #1f293d; border: none; color: white; padding: 10px 20px; cursor: pointer; border-radius: 5px; text-decoration: none; font-size: 14px;}
+        .timer-box { font-size: 1.2rem; color: #00ffcc; font-weight: bold; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px; }
+        .card { background: #161c2a; border-radius: 8px; padding: 20px; border: 1px solid #232d3f; }
+        .pair-title { font-size: 1.5rem; margin-top: 0; color: #a0aec0; }
+        .signal-action { font-size: 2rem; font-weight: bold; margin: 15px 0; }
+        .BUY { color: #00e676; }
+        .SELL { color: #ff1744; }
+        .WAIT { color: #b0bec5; }
+        .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px; }
+        .metric-box { background: #1f293d; padding: 10px; border-radius: 4px; }
+        .age-timer { font-size: 0.9rem; color: #ffb300; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h2>QUANT SIGNAL SYSTEM</h2>
+        <div>
+            <a href="/journal" class="nav-btn">View Trading Journal</a>
+        </div>
+        <div class="timer-box">Next Refresh In: <span id="refresh-counter">45</span>s</div>
+    </div>
+
+    <div class="grid">
+        <!-- EUR/USD Card -->
+        <div class="card" id="EUR_USD-card">
+            <h3 class="pair-title">EUR/USD (15M)</h3>
+            <div id="EUR_USD-action" class="signal-action WAIT">LOADING...</div>
+            <div class="metrics">
+                <div class="metric-box">Entry: <span id="EUR_USD-entry">-</span></div>
+                <div class="metric-box">Reason: <span id="EUR_USD-reason">-</span></div>
+                <div class="metric-box" style="color: #00e676;">Take Profit: <span id="EUR_USD-tp">-</span></div>
+                <div class="metric-box" style="color: #ff1744;">Stop Loss: <span id="EUR_USD-sl">-</span></div>
+            </div>
+            <div class="age-timer" id="EUR_USD-age"></div>
+        </div>
+
+        <!-- GBP/USD Card -->
+        <div class="card" id="GBP_USD-card">
+            <h3 class="pair-title">GBP/USD (15M)</h3>
+            <div id="GBP_USD-action" class="signal-action WAIT">LOADING...</div>
+            <div class="metrics">
+                <div class="metric-box">Entry: <span id="GBP_USD-entry">-</span></div>
+                <div class="metric-box">Reason: <span id="GBP_USD-reason">-</span></div>
+                <div class="metric-box" style="color: #00e676;">Take Profit: <span id="GBP_USD-tp">-</span></div>
+                <div class="metric-box" style="color: #ff1744;">Stop Loss: <span id="GBP_USD-sl">-</span></div>
+            </div>
+            <div class="age-timer" id="GBP_USD-age"></div>
+        </div>
+    </div>
+
+    <script>
+        let countdown = 45;
+        let signalTimestamps = { "EUR/USD": null, "GBP/USD": null };
+
+        async function updateSignals() {
+            try {
+                const res = await fetch('/api/signals');
+                const data = await res.json();
+                
+                for (const pair in data) {
+                    const idKey = pair.replace('/', '_');
+                    const signal = data[pair];
+                    
+                    const actionEl = document.getElementById(`${idKey}-action`);
+                    actionEl.innerText = signal.action;
+                    actionEl.className = `signal-action ${signal.action}`;
+                    
+                    document.getElementById(`${idKey}-entry`).innerText = signal.entry || '-';
+                    document.getElementById(`${idKey}-reason`).innerText = signal.reason || '-';
+                    document.getElementById(`${idKey}-tp`).innerText = signal.tp || '-';
+                    document.getElementById(`${idKey}-sl`).innerText = signal.sl || '-';
+                    
+                    signalTimestamps[pair] = signal.timestamp || null;
+                }
+            } catch (err) {
+                console.error("Error updating market data:", err);
+            }
+        }
+
+        setInterval(() => {
+            countdown--;
+            if (countdown <= 0) {
+                countdown = 45;
+                updateSignals();
+            }
+            document.getElementById('refresh-counter').innerText = countdown;
+
+            for (const pair in signalTimestamps) {
+                const idKey = pair.replace('/', '_');
+                const ts = signalTimestamps[pair];
+                const ageEl = document.getElementById(`${idKey}-age`);
+                if (ts) {
+                    const elapsed = Math.floor(Date.now() / 1000) - ts;
+                    ageEl.innerText = `Signal active: ${elapsed} seconds ago`;
+                } else {
+                    ageEl.innerText = '';
+                }
+            }
+        }, 1000);
+
+        updateSignals();
+    </script>
+</body>
+</html>
