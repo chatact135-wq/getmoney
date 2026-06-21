@@ -21,12 +21,10 @@ PAIRS = ["EUR/USD", "GBP/USD"]
 last_logged_signal = {}
 
 def fetch_market_data(symbol: str):
-    # Upgraded to fetch 250 candles so the 200 EMA has enough data to calculate properly
-    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=15min&outputsize=250&apikey={TWELVEDATA_API_KEY}"
+    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=15min&outputsize=50&apikey={TWELVEDATA_API_KEY}"
     try:
         response = requests.get(url).json()
         
-        # If TwelveData rejects the request, grab their exact error message
         if "status" in response and response["status"] == "error":
             return {"api_error": response.get("message", "Unknown API Error from TwelveData")}
             
@@ -35,87 +33,86 @@ def fetch_market_data(symbol: str):
         
         df = pd.DataFrame(response["values"])
         df["datetime"] = pd.to_datetime(df["datetime"])
-        for col in ["open", "high", "low", "close", "volume"]:
+        
+        # THE FIX: Only require open, high, low, and close. 
+        # Forex does not provide volume data!
+        for col in ["open", "high", "low", "close"]:
             df[col] = df[col].astype(float)
+            
+        # Safely convert volume ONLY if it actually exists (like if you switch to Crypto later)
+        if "volume" in df.columns:
+            df["volume"] = df["volume"].astype(float)
             
         df = df.iloc[::-1].reset_index(drop=True)
         return df
     except Exception as e:
+        # This is where your 'volume' error was being generated
         return {"api_error": f"Server Error: {str(e)}"}
 
 def analyze_strategy(data, pair: str, db: Session):
     global last_logged_signal
     
-    # 1. Did TwelveData block us? Send the exact error to the dashboard UI
     if isinstance(data, dict) and "api_error" in data:
         return {"action": "WAIT", "reason": data["api_error"], "entry": "-", "sl": "-", "tp": "-"}
 
     df = data
     
-    # 2. ALWAYS grab the most recent price to show on the screen (Even if market is closed)
     current_price = "-"
     if df is not None and len(df) > 0:
         current_price = round(df.iloc[-1]["close"], 5)
 
-    # 3. Check if we have enough data to run the math
-    if df is None or len(df) < 200:
-        return {"action": "WAIT", "reason": f"Gathering Candles ({len(df) if df is not None else 0}/200)", "entry": current_price, "sl": "-", "tp": "-"}
+    if df is None or len(df) < 30:
+        return {"action": "WAIT", "reason": f"Gathering Candles ({len(df) if df is not None else 0}/30)", "entry": current_price, "sl": "-", "tp": "-"}
 
-    # Indicators
-    df.ta.ema(length=50, append=True)
-    df.ta.ema(length=200, append=True)
-    df.ta.rsi(length=14, append=True)
-    df.ta.atr(length=14, append=True)
-    
+    ema9_series = df.ta.ema(length=9)
+    ema21_series = df.ta.ema(length=21)
+    rsi_series = df.ta.rsi(length=14)
+    atr_series = df.ta.atr(length=14)
     adx_df = df.ta.adx(length=14)
-    df["ADX_14"] = adx_df["ADX_14"]
 
-    row = df.iloc[-2] # Target last closed candle
-    candle_time = row["datetime"]
-    
-    close = row["close"]
-    ema50 = row["EMA_50"]
-    ema200 = row["EMA_200"]
-    rsi = row["RSI_14"]
-    adx = row["ADX_14"]
-    atr = row["ATR_14"]
+    candle_time = df.iloc[-2]["datetime"]
+    close = df.iloc[-2]["close"]
 
-    # Sideways market filter
-    if adx < 22:
+    ema9 = ema9_series.iloc[-2]
+    ema21 = ema21_series.iloc[-2]
+    rsi = rsi_series.iloc[-2]
+    atr = atr_series.iloc[-2]
+    adx = adx_df.iloc[-2, 0]
+
+    if pd.isna(adx) or adx < 20:
         return {"action": "WAIT", "reason": "Market is flat (Low ADX)", "entry": current_price, "sl": "-", "tp": "-"}
 
-    is_bullish = ema50 > ema200
-    is_bearish = ema50 < ema200
+    is_bullish = ema9 > ema21
+    is_bearish = ema9 < ema21
 
     sl_distance = 1.5 * atr
     tp_distance = 3.0 * atr
 
     signal = None
 
-    if is_bullish and rsi < 35:
+    if is_bullish and rsi < 40:
         signal = {
             "action": "BUY",
             "entry": round(close, 5),
             "sl": round(close - sl_distance, 5),
             "tp": round(close + tp_distance, 5),
-            "reason": "Bullish Trend & Oversold RSI Pullback",
+            "reason": "Intraday Bullish Trend & RSI Pullback",
             "timestamp": int(time.time()),
             "candle_time": str(candle_time)
         }
-    elif is_bearish and rsi > 65:
+    elif is_bearish and rsi > 60:
         signal = {
             "action": "SELL",
             "entry": round(close, 5),
             "sl": round(close + sl_distance, 5),
             "tp": round(close - tp_distance, 5),
-            "reason": "Bearish Trend & Overbought RSI Pullback",
+            "reason": "Intraday Bearish Trend & RSI Overbought",
             "timestamp": int(time.time()),
             "candle_time": str(candle_time)
         }
     else:
         return {"action": "WAIT", "reason": "No high-probability setup", "entry": current_price, "sl": "-", "tp": "-"}
 
-    # Database Logging - Check if this is a new signal
     if signal and last_logged_signal.get(pair) != str(candle_time):
         new_trade = TradeJournal(
             pair=pair,
