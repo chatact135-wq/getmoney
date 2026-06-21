@@ -16,7 +16,7 @@ app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "YOUR_API_KEY_HERE")
-PAIRS = ["EUR/USD", "GBP/USD"]
+PAIRS = ["BTC/USD", "ETH/USD"]
 
 # Memory store to prevent logging the exact same signal multiple times per candle
 last_logged_signal = {"EUR/USD": None, "GBP/USD": None}
