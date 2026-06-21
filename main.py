@@ -1,3 +1,4 @@
+
 import os
 import time
 import requests
@@ -114,13 +115,16 @@ def analyze_strategy(df: pd.DataFrame, pair: str, db: Session):
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    # Updated FastAPI Syntax
+    return templates.TemplateResponse(request=request, name="index.html")
 
 @app.get("/journal", response_class=HTMLResponse)
 async def journal_page(request: Request, db: Session = Depends(get_db)):
     # Fetch last 50 trades from the database
     trades = db.query(TradeJournal).order_by(TradeJournal.timestamp.desc()).limit(50).all()
-    return templates.TemplateResponse("journal.html", {"request": request, "trades": trades})
+    
+    # Updated FastAPI Syntax
+    return templates.TemplateResponse(request=request, name="journal.html", context={"trades": trades})
 
 @app.get("/api/signals")
 async def get_signals(db: Session = Depends(get_db)):
