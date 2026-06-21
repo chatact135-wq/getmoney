@@ -1,4 +1,3 @@
-
 import os
 import time
 import requests
@@ -16,17 +15,23 @@ app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "YOUR_API_KEY_HERE")
-PAIRS = ["BTC/USD", "ETH/USD"]
+PAIRS = ["EUR/USD", "GBP/USD"]
 
-# Memory store to prevent logging the exact same signal multiple times per candle
-last_logged_signal = {"EUR/USD": None, "GBP/USD": None}
+# Dynamic memory store to prevent logging duplicate signals
+last_logged_signal = {}
 
 def fetch_market_data(symbol: str):
-    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=15min&outputsize=50&apikey={TWELVEDATA_API_KEY}"
+    # Upgraded to fetch 250 candles so the 200 EMA has enough data to calculate properly
+    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=15min&outputsize=250&apikey={TWELVEDATA_API_KEY}"
     try:
         response = requests.get(url).json()
+        
+        # If TwelveData rejects the request, grab their exact error message
+        if "status" in response and response["status"] == "error":
+            return {"api_error": response.get("message", "Unknown API Error from TwelveData")}
+            
         if "values" not in response:
-            return None
+            return {"api_error": "No price data returned. Check API Key or Credits."}
         
         df = pd.DataFrame(response["values"])
         df["datetime"] = pd.to_datetime(df["datetime"])
@@ -36,12 +41,25 @@ def fetch_market_data(symbol: str):
         df = df.iloc[::-1].reset_index(drop=True)
         return df
     except Exception as e:
-        return None
+        return {"api_error": f"Server Error: {str(e)}"}
 
-def analyze_strategy(df: pd.DataFrame, pair: str, db: Session):
+def analyze_strategy(data, pair: str, db: Session):
     global last_logged_signal
-    if df is None or len(df) < 20:
-        return {"action": "WAIT", "reason": "Insufficient Data"}
+    
+    # 1. Did TwelveData block us? Send the exact error to the dashboard UI
+    if isinstance(data, dict) and "api_error" in data:
+        return {"action": "WAIT", "reason": data["api_error"], "entry": "-", "sl": "-", "tp": "-"}
+
+    df = data
+    
+    # 2. ALWAYS grab the most recent price to show on the screen (Even if market is closed)
+    current_price = "-"
+    if df is not None and len(df) > 0:
+        current_price = round(df.iloc[-1]["close"], 5)
+
+    # 3. Check if we have enough data to run the math
+    if df is None or len(df) < 200:
+        return {"action": "WAIT", "reason": f"Gathering Candles ({len(df) if df is not None else 0}/200)", "entry": current_price, "sl": "-", "tp": "-"}
 
     # Indicators
     df.ta.ema(length=50, append=True)
@@ -64,7 +82,7 @@ def analyze_strategy(df: pd.DataFrame, pair: str, db: Session):
 
     # Sideways market filter
     if adx < 22:
-        return {"action": "WAIT", "reason": "Market is flat (Low ADX)"}
+        return {"action": "WAIT", "reason": "Market is flat (Low ADX)", "entry": current_price, "sl": "-", "tp": "-"}
 
     is_bullish = ema50 > ema200
     is_bearish = ema50 < ema200
@@ -95,10 +113,10 @@ def analyze_strategy(df: pd.DataFrame, pair: str, db: Session):
             "candle_time": str(candle_time)
         }
     else:
-        return {"action": "WAIT", "reason": "No high-probability setup"}
+        return {"action": "WAIT", "reason": "No high-probability setup", "entry": current_price, "sl": "-", "tp": "-"}
 
     # Database Logging - Check if this is a new signal
-    if signal and last_logged_signal[pair] != str(candle_time):
+    if signal and last_logged_signal.get(pair) != str(candle_time):
         new_trade = TradeJournal(
             pair=pair,
             action=signal["action"],
@@ -115,15 +133,11 @@ def analyze_strategy(df: pd.DataFrame, pair: str, db: Session):
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
-    # Updated FastAPI Syntax
     return templates.TemplateResponse(request=request, name="index.html")
 
 @app.get("/journal", response_class=HTMLResponse)
 async def journal_page(request: Request, db: Session = Depends(get_db)):
-    # Fetch last 50 trades from the database
     trades = db.query(TradeJournal).order_by(TradeJournal.timestamp.desc()).limit(50).all()
-    
-    # Updated FastAPI Syntax
     return templates.TemplateResponse(request=request, name="journal.html", context={"trades": trades})
 
 @app.get("/api/signals")
