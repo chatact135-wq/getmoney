@@ -21,7 +21,8 @@ PAIRS = ["EUR/USD", "GBP/USD"]
 last_logged_signal = {}
 
 def fetch_market_data(symbol: str):
-    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=15min&outputsize=50&apikey={TWELVEDATA_API_KEY}"
+    # CHANGED: Now pulling hyper-fast 5-minute candles
+    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=5min&outputsize=50&apikey={TWELVEDATA_API_KEY}"
     try:
         response = requests.get(url).json()
         
@@ -34,19 +35,15 @@ def fetch_market_data(symbol: str):
         df = pd.DataFrame(response["values"])
         df["datetime"] = pd.to_datetime(df["datetime"])
         
-        # THE FIX: Only require open, high, low, and close. 
-        # Forex does not provide volume data!
         for col in ["open", "high", "low", "close"]:
             df[col] = df[col].astype(float)
             
-        # Safely convert volume ONLY if it actually exists (like if you switch to Crypto later)
         if "volume" in df.columns:
             df["volume"] = df["volume"].astype(float)
             
         df = df.iloc[::-1].reset_index(drop=True)
         return df
     except Exception as e:
-        # This is where your 'volume' error was being generated
         return {"api_error": f"Server Error: {str(e)}"}
 
 def analyze_strategy(data, pair: str, db: Session):
@@ -61,57 +58,52 @@ def analyze_strategy(data, pair: str, db: Session):
     if df is not None and len(df) > 0:
         current_price = round(df.iloc[-1]["close"], 5)
 
-    if df is None or len(df) < 30:
-        return {"action": "WAIT", "reason": f"Gathering Candles ({len(df) if df is not None else 0}/30)", "entry": current_price, "sl": "-", "tp": "-"}
+    if df is None or len(df) < 20:
+        return {"action": "WAIT", "reason": f"Gathering Candles ({len(df) if df is not None else 0}/20)", "entry": current_price, "sl": "-", "tp": "-"}
 
-    ema9_series = df.ta.ema(length=9)
-    ema21_series = df.ta.ema(length=21)
+    # SCALPING INDICATORS: Extremely sensitive to sudden price drops/rises
+    ema5_series = df.ta.ema(length=5)
+    ema13_series = df.ta.ema(length=13)
     rsi_series = df.ta.rsi(length=14)
     atr_series = df.ta.atr(length=14)
-    adx_df = df.ta.adx(length=14)
 
     candle_time = df.iloc[-2]["datetime"]
     close = df.iloc[-2]["close"]
 
-    ema9 = ema9_series.iloc[-2]
-    ema21 = ema21_series.iloc[-2]
+    ema5 = ema5_series.iloc[-2]
+    ema13 = ema13_series.iloc[-2]
     rsi = rsi_series.iloc[-2]
     atr = atr_series.iloc[-2]
-    adx = adx_df.iloc[-2, 0]
 
-    if pd.isna(adx) or adx < 18:
-        return {"action": "WAIT", "reason": "Market is flat (Low ADX)", "entry": current_price, "sl": "-", "tp": "-"}
-
-    is_bullish = ema9 > ema21
-    is_bearish = ema9 < ema21
-
-    sl_distance = 1.5 * atr
-    tp_distance = 3.0 * atr
+    # Tight Scalping Targets: Get in, hit the profit, get out.
+    sl_distance = 1.0 * atr
+    tp_distance = 1.5 * atr
 
     signal = None
 
-    if is_bullish and rsi < 40:
+    # BREAKOUT LOGIC: Catch the sudden moves immediately
+    if ema5 > ema13 and rsi > 55:
         signal = {
             "action": "BUY",
             "entry": round(close, 5),
             "sl": round(close - sl_distance, 5),
             "tp": round(close + tp_distance, 5),
-            "reason": "Intraday Bullish Trend & RSI Pullback",
+            "reason": "Fast Bullish Breakout (5m)",
             "timestamp": int(time.time()),
             "candle_time": str(candle_time)
         }
-    elif is_bearish and rsi > 60:
+    elif ema5 < ema13 and rsi < 45:
         signal = {
             "action": "SELL",
             "entry": round(close, 5),
             "sl": round(close + sl_distance, 5),
             "tp": round(close - tp_distance, 5),
-            "reason": "Intraday Bearish Trend & RSI Overbought",
+            "reason": "Fast Bearish Breakout (5m)",
             "timestamp": int(time.time()),
             "candle_time": str(candle_time)
         }
     else:
-        return {"action": "WAIT", "reason": "No high-probability setup", "entry": current_price, "sl": "-", "tp": "-"}
+        return {"action": "WAIT", "reason": "No clear 5m momentum", "entry": current_price, "sl": "-", "tp": "-"}
 
     if signal and last_logged_signal.get(pair) != str(candle_time):
         new_trade = TradeJournal(
