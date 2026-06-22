@@ -3,6 +3,7 @@ import time
 import requests
 import pandas as pd
 import pandas_ta as ta
+from datetime import datetime, timedelta  # <-- NEW: Required for the cooldown timer
 from fastapi import FastAPI, Request, Depends
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -19,8 +20,11 @@ PAIRS = ["EUR/USD", "GBP/USD"]
 
 # Dynamic memory stores
 last_logged_signal = {}
-# NEW: Store original trigger times so page refreshes don't reset the clock
 signal_timestamps = {}
+
+# --- NEW: Cooldown Tracker ---
+last_trade_execution_times = {}
+COOLDOWN_MINUTES = 5  # Forces the bot to wait 5 minutes (1 candle) before firing again
 
 def fetch_market_data(symbol: str):
     url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=5min&outputsize=50&apikey={TWELVEDATA_API_KEY}"
@@ -48,7 +52,7 @@ def fetch_market_data(symbol: str):
         return {"api_error": f"Server Error: {str(e)}"}
 
 def analyze_strategy(data, pair: str, db: Session):
-    global last_logged_signal, signal_timestamps
+    global last_logged_signal, signal_timestamps, last_trade_execution_times
     
     if isinstance(data, dict) and "api_error" in data:
         return {"action": "WAIT", "reason": data["api_error"], "entry": "-", "sl": "-", "tp": "-"}
@@ -75,7 +79,6 @@ def analyze_strategy(data, pair: str, db: Session):
     rsi = rsi_series.iloc[-2]
     atr = atr_series.iloc[-2]
 
-    # Scalping targets (You can change 1.0 to 0.5 and 1.5 to 0.8 if you want ultra-fast 20 point targets)
     sl_distance = 1.0 * atr
     tp_distance = 1.5 * atr
 
@@ -90,14 +93,26 @@ def analyze_strategy(data, pair: str, db: Session):
         action = "SELL"
         reason = "Fast Bearish Breakout (5m)"
 
+    # --- NEW: Cooldown Logic Block ---
+    # If the bot wants to trade, ensure enough time has passed since the last trade
+    current_time_dt = datetime.now()
+    if action in ["BUY", "SELL"]:
+        if pair in last_trade_execution_times:
+            time_since_last = current_time_dt - last_trade_execution_times[pair]
+            cooldown_expiry = timedelta(minutes=COOLDOWN_MINUTES)
+            
+            # If we are still inside the cooldown window, force the bot to WAIT
+            if time_since_last < cooldown_expiry:
+                seconds_left = int((cooldown_expiry - time_since_last).total_seconds())
+                action = "WAIT"
+                reason = f"Cooldown Active ({seconds_left}s remaining)"
+
     signal = None
 
     # 2. Lock the timestamp in memory if a signal is active
     if action in ["BUY", "SELL"]:
-        # Create a unique ID combining the asset pair, the specific candle, and the action
         signal_id = f"{pair}_{str(candle_time)}_{action}"
         
-        # If this is our very first time seeing this breakout, save the exact current time
         if signal_id not in signal_timestamps:
             signal_timestamps[signal_id] = int(time.time())
             
@@ -107,7 +122,7 @@ def analyze_strategy(data, pair: str, db: Session):
             "sl": round(close - sl_distance, 5) if action == "BUY" else round(close + sl_distance, 5),
             "tp": round(close + tp_distance, 5) if action == "BUY" else round(close - tp_distance, 5),
             "reason": reason,
-            "timestamp": signal_timestamps[signal_id], # Uses the locked memory time!
+            "timestamp": signal_timestamps[signal_id],
             "candle_time": str(candle_time)
         }
     else:
@@ -126,6 +141,9 @@ def analyze_strategy(data, pair: str, db: Session):
         db.add(new_trade)
         db.commit()
         last_logged_signal[pair] = str(candle_time)
+        
+        # --- NEW: Reset the cooldown timer ONLY when a trade is successfully logged ---
+        last_trade_execution_times[pair] = current_time_dt
 
     return signal
 
