@@ -79,7 +79,7 @@ def analyze_strategy(data, pair: str, db: Session):
     atr = atr_series.iloc[-2]
     adx = adx_df.iloc[-2, 0]
 
-    if pd.isna(adx) or adx < 20:
+    if pd.isna(adx) or adx < 18:
         return {"action": "WAIT", "reason": "Market is flat (Low ADX)", "entry": current_price, "sl": "-", "tp": "-"}
 
     is_bullish = ema9 > ema21
