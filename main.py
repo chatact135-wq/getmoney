@@ -17,11 +17,12 @@ templates = Jinja2Templates(directory="templates")
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "YOUR_API_KEY_HERE")
 PAIRS = ["EUR/USD", "GBP/USD"]
 
-# Dynamic memory store to prevent logging duplicate signals
+# Dynamic memory stores
 last_logged_signal = {}
+# NEW: Store original trigger times so page refreshes don't reset the clock
+signal_timestamps = {}
 
 def fetch_market_data(symbol: str):
-    # CHANGED: Now pulling hyper-fast 5-minute candles
     url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=5min&outputsize=50&apikey={TWELVEDATA_API_KEY}"
     try:
         response = requests.get(url).json()
@@ -47,7 +48,7 @@ def fetch_market_data(symbol: str):
         return {"api_error": f"Server Error: {str(e)}"}
 
 def analyze_strategy(data, pair: str, db: Session):
-    global last_logged_signal
+    global last_logged_signal, signal_timestamps
     
     if isinstance(data, dict) and "api_error" in data:
         return {"action": "WAIT", "reason": data["api_error"], "entry": "-", "sl": "-", "tp": "-"}
@@ -61,7 +62,6 @@ def analyze_strategy(data, pair: str, db: Session):
     if df is None or len(df) < 20:
         return {"action": "WAIT", "reason": f"Gathering Candles ({len(df) if df is not None else 0}/20)", "entry": current_price, "sl": "-", "tp": "-"}
 
-    # SCALPING INDICATORS: Extremely sensitive to sudden price drops/rises
     ema5_series = df.ta.ema(length=5)
     ema13_series = df.ta.ema(length=13)
     rsi_series = df.ta.rsi(length=14)
@@ -75,36 +75,45 @@ def analyze_strategy(data, pair: str, db: Session):
     rsi = rsi_series.iloc[-2]
     atr = atr_series.iloc[-2]
 
-    # Tight Scalping Targets: Get in, hit the profit, get out.
+    # Scalping targets (You can change 1.0 to 0.5 and 1.5 to 0.8 if you want ultra-fast 20 point targets)
     sl_distance = 1.0 * atr
     tp_distance = 1.5 * atr
 
+    # 1. Determine the core momentum
+    action = "WAIT"
+    reason = "No clear 5m momentum"
+    
+    if ema5 > ema13 and rsi > 55:
+        action = "BUY"
+        reason = "Fast Bullish Breakout (5m)"
+    elif ema5 < ema13 and rsi < 45:
+        action = "SELL"
+        reason = "Fast Bearish Breakout (5m)"
+
     signal = None
 
-    # BREAKOUT LOGIC: Catch the sudden moves immediately
-    if ema5 > ema13 and rsi > 55:
+    # 2. Lock the timestamp in memory if a signal is active
+    if action in ["BUY", "SELL"]:
+        # Create a unique ID combining the asset pair, the specific candle, and the action
+        signal_id = f"{pair}_{str(candle_time)}_{action}"
+        
+        # If this is our very first time seeing this breakout, save the exact current time
+        if signal_id not in signal_timestamps:
+            signal_timestamps[signal_id] = int(time.time())
+            
         signal = {
-            "action": "BUY",
+            "action": action,
             "entry": round(close, 5),
-            "sl": round(close - sl_distance, 5),
-            "tp": round(close + tp_distance, 5),
-            "reason": "Fast Bullish Breakout (5m)",
-            "timestamp": int(time.time()),
-            "candle_time": str(candle_time)
-        }
-    elif ema5 < ema13 and rsi < 45:
-        signal = {
-            "action": "SELL",
-            "entry": round(close, 5),
-            "sl": round(close + sl_distance, 5),
-            "tp": round(close - tp_distance, 5),
-            "reason": "Fast Bearish Breakout (5m)",
-            "timestamp": int(time.time()),
+            "sl": round(close - sl_distance, 5) if action == "BUY" else round(close + sl_distance, 5),
+            "tp": round(close + tp_distance, 5) if action == "BUY" else round(close - tp_distance, 5),
+            "reason": reason,
+            "timestamp": signal_timestamps[signal_id], # Uses the locked memory time!
             "candle_time": str(candle_time)
         }
     else:
-        return {"action": "WAIT", "reason": "No clear 5m momentum", "entry": current_price, "sl": "-", "tp": "-"}
+        return {"action": "WAIT", "reason": reason, "entry": current_price, "sl": "-", "tp": "-"}
 
+    # Database Logging
     if signal and last_logged_signal.get(pair) != str(candle_time):
         new_trade = TradeJournal(
             pair=pair,
