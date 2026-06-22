@@ -12,6 +12,7 @@
             --text-muted: #94a3b8;
             --green: #10b981;
             --red: #ef4444;
+            --yellow: #fbbf24;
         }
         body {
             background-color: var(--bg);
@@ -28,19 +29,11 @@
             margin-bottom: 25px;
             padding-bottom: 15px;
             border-bottom: 1px solid #334155;
-            flex-wrap: wrap; /* Fixes the button/timer overlap */
+            flex-wrap: wrap; 
             gap: 15px;
         }
-        .header-container h1 {
-            margin: 0;
-            font-size: 1.5rem;
-        }
-        .header-controls {
-            display: flex;
-            align-items: center;
-            gap: 15px;
-            flex-wrap: wrap;
-        }
+        .header-container h1 { margin: 0; font-size: 1.5rem; }
+        .header-controls { display: flex; align-items: center; gap: 15px; flex-wrap: wrap; }
         .btn {
             background-color: #334155;
             color: white;
@@ -50,13 +43,9 @@
             font-size: 0.9rem;
             transition: background 0.2s;
         }
-        .btn:hover {
-            background-color: #475569;
-        }
-        .timer {
-            color: #2dd4bf;
-            font-weight: bold;
-        }
+        .btn:hover { background-color: #475569; }
+        .timer { color: #2dd4bf; font-weight: bold; }
+        
         /* Grid Setup */
         .grid {
             display: grid;
@@ -69,46 +58,32 @@
             padding: 20px;
             border: 1px solid #334155;
         }
-        .card h2 {
-            margin-top: 0;
-            font-size: 1.2rem;
-            color: var(--text-muted);
-        }
-        .signal-action {
-            font-size: 2rem;
-            font-weight: bold;
+        .card h2 { margin-top: 0; font-size: 1.2rem; color: var(--text-muted); }
+        
+        /* Signal Header with Timer */
+        .signal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
             margin-bottom: 15px;
         }
+        .signal-action { font-size: 2rem; font-weight: bold; }
+        .time-ago { font-size: 0.9rem; color: var(--yellow); font-weight: bold; }
+        
         .WAIT { color: var(--text-muted); }
         .BUY { color: var(--green); }
         .SELL { color: var(--red); }
         
-        .data-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-        }
-        .data-box {
-            background: #0f172a;
-            padding: 12px;
-            border-radius: 6px;
-            font-size: 0.9rem;
-        }
+        .data-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .data-box { background: #0f172a; padding: 12px; border-radius: 6px; font-size: 0.9rem; }
         .tp { color: var(--green); }
         .sl { color: var(--red); }
 
-        /* === MOBILE RESPONSIVE FIXES === */
+        /* Mobile Responsive */
         @media (max-width: 600px) {
-            .header-container {
-                flex-direction: column;
-                align-items: flex-start;
-            }
-            .data-grid {
-                grid-template-columns: 1fr; /* Stacks the data boxes vertically on small screens */
-            }
-            .card h2 {
-                font-size: 1.1rem;
-            }
+            .header-container { flex-direction: column; align-items: flex-start; }
+            .data-grid { grid-template-columns: 1fr; }
+            .card h2 { font-size: 1.1rem; }
         }
     </style>
 </head>
@@ -141,9 +116,19 @@
                     
                     let actionClass = signal.action === 'BUY' ? 'BUY' : signal.action === 'SELL' ? 'SELL' : 'WAIT';
                     
+                    // Create the live timestamp badge only if it's a BUY or SELL
+                    let timeBadge = '';
+                    if (signal.action !== 'WAIT' && signal.timestamp) {
+                        timeBadge = `<div class="time-ago" data-timestamp="${signal.timestamp}">Triggered: Just now</div>`;
+                    }
+
+                    // Also fixed the (15M) text to say (5M) here!
                     card.innerHTML = `
-                        <h2>${pair} (15M)</h2>
-                        <div class="signal-action ${actionClass}">${signal.action}</div>
+                        <h2>${pair} (5M)</h2>
+                        <div class="signal-header">
+                            <div class="signal-action ${actionClass}">${signal.action}</div>
+                            ${timeBadge}
+                        </div>
                         <div class="data-grid">
                             <div class="data-box">Entry: ${signal.entry}</div>
                             <div class="data-box">Reason: ${signal.reason}</div>
@@ -158,7 +143,7 @@
             }
         }
 
-        // Timer Logic
+        // Main API Refresh Timer
         setInterval(() => {
             countdown--;
             if (countdown <= 0) {
@@ -166,6 +151,24 @@
                 fetchSignals();
             }
             document.getElementById('timerDisplay').innerText = `Next Refresh In: ${countdown}s`;
+        }, 1000);
+
+        // Live 'Time Ago' Counter (Updates independently every second)
+        setInterval(() => {
+            const now = Math.floor(Date.now() / 1000);
+            document.querySelectorAll('.time-ago').forEach(el => {
+                const ts = parseInt(el.getAttribute('data-timestamp'));
+                if (!ts) return;
+                
+                const diff = now - ts;
+                if (diff < 60) {
+                    el.innerText = `Triggered: ${diff}s ago`;
+                } else {
+                    const mins = Math.floor(diff / 60);
+                    const secs = diff % 60;
+                    el.innerText = `Triggered: ${mins}m ${secs}s ago`;
+                }
+            });
         }, 1000);
 
         // Initial fetch on load
