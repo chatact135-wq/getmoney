@@ -3,7 +3,7 @@ import time
 import requests
 import pandas as pd
 import pandas_ta as ta
-from datetime import datetime, timedelta  # <-- NEW: Required for the cooldown timer
+from datetime import datetime, timedelta
 from fastapi import FastAPI, Request, Depends
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -22,7 +22,7 @@ PAIRS = ["EUR/USD", "GBP/USD"]
 last_logged_signal = {}
 signal_timestamps = {}
 
-# --- NEW: Cooldown Tracker ---
+# --- Cooldown Tracker ---
 last_trade_execution_times = {}
 COOLDOWN_MINUTES = 5  # Forces the bot to wait 5 minutes (1 candle) before firing again
 
@@ -72,6 +72,7 @@ def analyze_strategy(data, pair: str, db: Session):
     atr_series = df.ta.atr(length=14)
 
     candle_time = df.iloc[-2]["datetime"]
+    open_price = df.iloc[-2]["open"]  # <-- NEW: Fetch the open price to check candle color
     close = df.iloc[-2]["close"]
 
     ema5 = ema5_series.iloc[-2]
@@ -86,15 +87,18 @@ def analyze_strategy(data, pair: str, db: Session):
     action = "WAIT"
     reason = "No clear 5m momentum"
     
-    if ema5 > ema13 and rsi > 55:
+    # --- NEW: Candle Color Verification ---
+    # The close MUST be higher than the open for a BUY (Green Candle)
+    if ema5 > ema13 and rsi > 55 and close > open_price:
         action = "BUY"
         reason = "Fast Bullish Breakout (5m)"
-    elif ema5 < ema13 and rsi < 45:
+        
+    # The close MUST be lower than the open for a SELL (Red Candle)
+    elif ema5 < ema13 and rsi < 45 and close < open_price:
         action = "SELL"
         reason = "Fast Bearish Breakout (5m)"
 
-    # --- NEW: Cooldown Logic Block ---
-    # If the bot wants to trade, ensure enough time has passed since the last trade
+    # --- Cooldown Logic Block ---
     current_time_dt = datetime.now()
     if action in ["BUY", "SELL"]:
         if pair in last_trade_execution_times:
@@ -142,7 +146,7 @@ def analyze_strategy(data, pair: str, db: Session):
         db.commit()
         last_logged_signal[pair] = str(candle_time)
         
-        # --- NEW: Reset the cooldown timer ONLY when a trade is successfully logged ---
+        # Reset the cooldown timer ONLY when a trade is successfully logged
         last_trade_execution_times[pair] = current_time_dt
 
     return signal
