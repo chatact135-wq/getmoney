@@ -1,6 +1,7 @@
 import os
 import time
 import requests
+import asyncio
 import pandas as pd
 import pandas_ta as ta
 from datetime import datetime, timedelta
@@ -21,6 +22,7 @@ PAIRS = ["EUR/USD", "GBP/USD"]
 # Dynamic memory stores
 last_logged_signal = {}
 signal_timestamps = {}
+latest_signals = {}  # NEW: Stores the current market state for the dashboard
 
 # --- Cooldown Tracker ---
 last_trade_execution_times = {}
@@ -42,7 +44,6 @@ def fetch_market_data(symbol: str):
         
         df = pd.DataFrame(response["values"])
         
-        # Timezone Fix (+4 Hours) 
         df["datetime"] = pd.to_datetime(df["datetime"]) + timedelta(hours=TIMEZONE_OFFSET)
         
         for col in ["open", "high", "low", "close"]:
@@ -72,8 +73,8 @@ def analyze_strategy(data, pair: str, db: Session):
         return {"action": "WAIT", "reason": f"Gathering Candles ({len(df) if df is not None else 0}/30)", "entry": current_price, "sl": "-", "tp": "-"}
 
     try:
-        # --- Predictive Indicators (Bollinger Bands & RSI) ---
-        bbands = df.ta.bbands(length=20, std=2)
+        # OPTION C: Loosened the fence from 2.0 to 1.5 so it catches trades faster
+        bbands = df.ta.bbands(length=20, std=1.5)
         rsi_series = df.ta.rsi(length=14)
         atr_series = df.ta.atr(length=14)
 
@@ -84,7 +85,6 @@ def analyze_strategy(data, pair: str, db: Session):
         open_price = df.iloc[-2]["open"]
         close = df.iloc[-2]["close"]
 
-        # Access Bollinger Band ceilings and floors by numeric column index
         lower_band = bbands.iloc[:, 0].iloc[-2]
         upper_band = bbands.iloc[:, 2].iloc[-2]
         
@@ -97,20 +97,20 @@ def analyze_strategy(data, pair: str, db: Session):
         action = "WAIT"
         reason = "No clear reversal setup"
         
+        # OPTION C: Loosened RSI triggers (40/60 instead of 35/65)
         # --- BUY THE BOTTOM ---
-        if (open_price < lower_band or close < lower_band) and rsi < 35 and close > open_price:
+        if (open_price < lower_band or close < lower_band) and rsi < 40 and close > open_price:
             action = "BUY"
             reason = "Bottom Reversal Bounce (5m)"
             
         # --- SELL THE TOP ---
-        elif (open_price > upper_band or close > upper_band) and rsi > 65 and close < open_price:
+        elif (open_price > upper_band or close > upper_band) and rsi > 60 and close < open_price:
             action = "SELL"
             reason = "Top Reversal Drop (5m)"
 
     except Exception as e:
         return {"action": "WAIT", "reason": f"System Error: {str(e)}", "entry": current_price, "sl": "-", "tp": "-"}
 
-    # --- Cooldown Logic Block ---
     current_time_dt = datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET)
     
     if action in ["BUY", "SELL"]:
@@ -161,6 +161,33 @@ def analyze_strategy(data, pair: str, db: Session):
 
     return signal
 
+# =====================================================================
+# NEW: AUTONOMOUS BACKGROUND ENGINE
+# This loop runs 24/7 on your server, even if the website is completely closed
+# =====================================================================
+async def autonomous_bot_loop():
+    while True:
+        # Create a database session specifically for the background worker
+        db = SessionLocal()
+        try:
+            for pair in PAIRS:
+                df = fetch_market_data(pair)
+                signal = analyze_strategy(df, pair, db)
+                latest_signals[pair] = signal
+        except Exception as e:
+            print(f"Background Engine Error: {e}")
+        finally:
+            db.close()
+            
+        # The bot rests for 10 seconds, then checks the market again.
+        await asyncio.sleep(10)
+
+@app.on_event("startup")
+async def startup_event():
+    # As soon as Railway turns on, fire up the background engine
+    asyncio.create_task(autonomous_bot_loop())
+# =====================================================================
+
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
     return templates.TemplateResponse(request=request, name="index.html")
@@ -171,9 +198,7 @@ async def journal_page(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(request=request, name="journal.html", context={"trades": trades})
 
 @app.get("/api/signals")
-async def get_signals(db: Session = Depends(get_db)):
-    signals = {}
-    for pair in PAIRS:
-        df = fetch_market_data(pair)
-        signals[pair] = analyze_strategy(df, pair, db)
-    return signals
+async def get_signals():
+    # NEW: The dashboard no longer forces the bot to calculate. 
+    # It just instantly reads whatever the background engine last saved.
+    return latest_signals
