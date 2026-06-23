@@ -71,17 +71,23 @@ def analyze_strategy(data, pair: str, db: Session):
     if df is None or len(df) < 20:
         return {"action": "WAIT", "reason": f"Gathering Candles ({len(df) if df is not None else 0}/20)", "entry": current_price, "sl": "-", "tp": "-"}
 
-    ema5_series = df.ta.ema(length=5)
-    ema13_series = df.ta.ema(length=13)
+    # --- NEW: Predictive Indicators (Bollinger Bands & RSI) ---
+    bbands = df.ta.bbands(length=20, std=2)
     rsi_series = df.ta.rsi(length=14)
     atr_series = df.ta.atr(length=14)
+
+    # Safety check in case indicators fail to load
+    if bbands is None or bbands.empty or rsi_series is None or atr_series is None:
+        return {"action": "WAIT", "reason": "Calculating Indicators", "entry": current_price, "sl": "-", "tp": "-"}
 
     candle_time = df.iloc[-2]["datetime"]
     open_price = df.iloc[-2]["open"]
     close = df.iloc[-2]["close"]
 
-    ema5 = ema5_series.iloc[-2]
-    ema13 = ema13_series.iloc[-2]
+    # Extract Bollinger Band ceilings and floors
+    lower_band = bbands["BBL_20_2.0"].iloc[-2]
+    upper_band = bbands["BBU_20_2.0"].iloc[-2]
+    
     rsi = rsi_series.iloc[-2]
     atr = atr_series.iloc[-2]
 
@@ -90,16 +96,19 @@ def analyze_strategy(data, pair: str, db: Session):
 
     # 1. Determine the core momentum
     action = "WAIT"
-    reason = "No clear 5m momentum"
+    reason = "No clear reversal setup"
     
-    # CORRECTED: Removed the restrictive size limits. Bot is free to catch large breakouts.
-    if ema5 > ema13 and rsi > 55 and close > open_price:
+    # --- NEW: BUY THE BOTTOM ---
+    # Rule: Price pierced the floor, RSI is oversold, and the current candle is green
+    if (open_price < lower_band or close < lower_band) and rsi < 35 and close > open_price:
         action = "BUY"
-        reason = "Fast Bullish Breakout (5m)"
+        reason = "Bottom Reversal Bounce (5m)"
         
-    elif ema5 < ema13 and rsi < 45 and close < open_price:
+    # --- NEW: SELL THE TOP ---
+    # Rule: Price pierced the ceiling, RSI is overbought, and the current candle is red
+    elif (open_price > upper_band or close > upper_band) and rsi > 65 and close < open_price:
         action = "SELL"
-        reason = "Fast Bearish Breakout (5m)"
+        reason = "Top Reversal Drop (5m)"
 
     # --- Cooldown Logic Block ---
     current_time_dt = datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET)
