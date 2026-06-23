@@ -22,7 +22,7 @@ PAIRS = ["EUR/USD", "GBP/USD"]
 # Dynamic memory stores
 last_logged_signal = {}
 signal_timestamps = {}
-latest_signals = {}  # NEW: Stores the current market state for the dashboard
+latest_signals = {}  
 
 # --- Cooldown Tracker ---
 last_trade_execution_times = {}
@@ -73,21 +73,21 @@ def analyze_strategy(data, pair: str, db: Session):
         return {"action": "WAIT", "reason": f"Gathering Candles ({len(df) if df is not None else 0}/30)", "entry": current_price, "sl": "-", "tp": "-"}
 
     try:
-        # OPTION C: Loosened the fence from 2.0 to 1.5 so it catches trades faster
-        bbands = df.ta.bbands(length=20, std=1.5)
+        # --- RESTORED ORIGINAL INDICATORS (EMAs) ---
+        ema5_series = df.ta.ema(length=5)
+        ema13_series = df.ta.ema(length=13)
         rsi_series = df.ta.rsi(length=14)
         atr_series = df.ta.atr(length=14)
 
-        if bbands is None or bbands.empty or rsi_series is None or atr_series is None:
+        if ema5_series is None or ema13_series is None or rsi_series is None or atr_series is None:
             return {"action": "WAIT", "reason": "Calculating Indicators", "entry": current_price, "sl": "-", "tp": "-"}
 
         candle_time = df.iloc[-2]["datetime"]
         open_price = df.iloc[-2]["open"]
         close = df.iloc[-2]["close"]
 
-        lower_band = bbands.iloc[:, 0].iloc[-2]
-        upper_band = bbands.iloc[:, 2].iloc[-2]
-        
+        ema5 = ema5_series.iloc[-2]
+        ema13 = ema13_series.iloc[-2]
         rsi = rsi_series.iloc[-2]
         atr = atr_series.iloc[-2]
 
@@ -95,18 +95,16 @@ def analyze_strategy(data, pair: str, db: Session):
         tp_distance = 1.5 * atr
 
         action = "WAIT"
-        reason = "No clear reversal setup"
+        reason = "No clear 5m momentum"
         
-        # OPTION C: Loosened RSI triggers (40/60 instead of 35/65)
-        # --- BUY THE BOTTOM ---
-        if (open_price < lower_band or close < lower_band) and rsi < 40 and close > open_price:
+        # --- RESTORED ORIGINAL BREAKOUT LOGIC ---
+        if ema5 > ema13 and rsi > 55 and close > open_price:
             action = "BUY"
-            reason = "Bottom Reversal Bounce (5m)"
+            reason = "Fast Bullish Breakout (5m)"
             
-        # --- SELL THE TOP ---
-        elif (open_price > upper_band or close > upper_band) and rsi > 60 and close < open_price:
+        elif ema5 < ema13 and rsi < 45 and close < open_price:
             action = "SELL"
-            reason = "Top Reversal Drop (5m)"
+            reason = "Fast Bearish Breakout (5m)"
 
     except Exception as e:
         return {"action": "WAIT", "reason": f"System Error: {str(e)}", "entry": current_price, "sl": "-", "tp": "-"}
@@ -155,50 +153,4 @@ def analyze_strategy(data, pair: str, db: Session):
         )
         db.add(new_trade)
         db.commit()
-        last_logged_signal[pair] = str(candle_time)
-        
-        last_trade_execution_times[pair] = current_time_dt
-
-    return signal
-
-# =====================================================================
-# NEW: AUTONOMOUS BACKGROUND ENGINE
-# This loop runs 24/7 on your server, even if the website is completely closed
-# =====================================================================
-async def autonomous_bot_loop():
-    while True:
-        # Create a database session specifically for the background worker
-        db = SessionLocal()
-        try:
-            for pair in PAIRS:
-                df = fetch_market_data(pair)
-                signal = analyze_strategy(df, pair, db)
-                latest_signals[pair] = signal
-        except Exception as e:
-            print(f"Background Engine Error: {e}")
-        finally:
-            db.close()
-            
-        # The bot rests for 10 seconds, then checks the market again.
-        await asyncio.sleep(10)
-
-@app.on_event("startup")
-async def startup_event():
-    # As soon as Railway turns on, fire up the background engine
-    asyncio.create_task(autonomous_bot_loop())
-# =====================================================================
-
-@app.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request):
-    return templates.TemplateResponse(request=request, name="index.html")
-
-@app.get("/journal", response_class=HTMLResponse)
-async def journal_page(request: Request, db: Session = Depends(get_db)):
-    trades = db.query(TradeJournal).order_by(TradeJournal.timestamp.desc()).limit(50).all()
-    return templates.TemplateResponse(request=request, name="journal.html", context={"trades": trades})
-
-@app.get("/api/signals")
-async def get_signals():
-    # NEW: The dashboard no longer forces the bot to calculate. 
-    # It just instantly reads whatever the background engine last saved.
-    return latest_signals
+        last_logged
