@@ -26,8 +26,12 @@ signal_timestamps = {}
 last_trade_execution_times = {}
 COOLDOWN_MINUTES = 5  # Forces the bot to wait 5 minutes (1 candle) before firing again
 
+# --- Timezone Settings ---
+TIMEZONE_OFFSET = 4  # +4 Hours
+
 def fetch_market_data(symbol: str):
-    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=5min&outputsize=50&apikey={TWELVEDATA_API_KEY}"
+    # NEW: Added &timezone=UTC to the API call so we have a reliable baseline to add 4 hours to
+    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=5min&outputsize=50&timezone=UTC&apikey={TWELVEDATA_API_KEY}"
     try:
         response = requests.get(url).json()
         
@@ -38,7 +42,9 @@ def fetch_market_data(symbol: str):
             return {"api_error": "No price data returned. Check API Key or Credits."}
         
         df = pd.DataFrame(response["values"])
-        df["datetime"] = pd.to_datetime(df["datetime"])
+        
+        # --- NEW: Timezone Fix (+4 Hours) ---
+        df["datetime"] = pd.to_datetime(df["datetime"]) + timedelta(hours=TIMEZONE_OFFSET)
         
         for col in ["open", "high", "low", "close"]:
             df[col] = df[col].astype(float)
@@ -72,7 +78,7 @@ def analyze_strategy(data, pair: str, db: Session):
     atr_series = df.ta.atr(length=14)
 
     candle_time = df.iloc[-2]["datetime"]
-    open_price = df.iloc[-2]["open"]  # <-- NEW: Fetch the open price to check candle color
+    open_price = df.iloc[-2]["open"]
     close = df.iloc[-2]["close"]
 
     ema5 = ema5_series.iloc[-2]
@@ -83,29 +89,35 @@ def analyze_strategy(data, pair: str, db: Session):
     sl_distance = 1.0 * atr
     tp_distance = 1.5 * atr
 
+    # --- NEW: Calculate ATR Exhaustion ---
+    # Find the exact size of the candle's body
+    candle_body_size = abs(close - open_price)
+    # Limit: The candle cannot be larger than 1.5 times the normal ATR
+    max_allowed_size = atr * 1.5 
+
     # 1. Determine the core momentum
     action = "WAIT"
     reason = "No clear 5m momentum"
     
-    # --- NEW: Candle Color Verification ---
-    # The close MUST be higher than the open for a BUY (Green Candle)
-    if ema5 > ema13 and rsi > 55 and close > open_price:
+    # NEW: Added candle_body_size check to prevent buying the top of a massive pump
+    if ema5 > ema13 and rsi > 55 and close > open_price and candle_body_size <= max_allowed_size:
         action = "BUY"
         reason = "Fast Bullish Breakout (5m)"
         
-    # The close MUST be lower than the open for a SELL (Red Candle)
-    elif ema5 < ema13 and rsi < 45 and close < open_price:
+    # NEW: Added candle_body_size check to prevent selling the bottom of a massive dump
+    elif ema5 < ema13 and rsi < 45 and close < open_price and candle_body_size <= max_allowed_size:
         action = "SELL"
         reason = "Fast Bearish Breakout (5m)"
 
     # --- Cooldown Logic Block ---
-    current_time_dt = datetime.now()
+    # Ensure all server time checks are also on +4 hours
+    current_time_dt = datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET)
+    
     if action in ["BUY", "SELL"]:
         if pair in last_trade_execution_times:
             time_since_last = current_time_dt - last_trade_execution_times[pair]
             cooldown_expiry = timedelta(minutes=COOLDOWN_MINUTES)
             
-            # If we are still inside the cooldown window, force the bot to WAIT
             if time_since_last < cooldown_expiry:
                 seconds_left = int((cooldown_expiry - time_since_last).total_seconds())
                 action = "WAIT"
@@ -140,13 +152,13 @@ def analyze_strategy(data, pair: str, db: Session):
             entry_price=signal["entry"],
             stop_loss=signal["sl"],
             take_profit=signal["tp"],
-            reason=signal["reason"]
+            reason=signal["reason"],
+            timestamp=current_time_dt # NEW: Overrides the DB default to force +4 hours
         )
         db.add(new_trade)
         db.commit()
         last_logged_signal[pair] = str(candle_time)
         
-        # Reset the cooldown timer ONLY when a trade is successfully logged
         last_trade_execution_times[pair] = current_time_dt
 
     return signal
