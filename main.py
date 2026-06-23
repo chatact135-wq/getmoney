@@ -68,114 +68,33 @@ def analyze_strategy(data, pair: str, db: Session):
     if df is not None and len(df) > 0:
         current_price = round(df.iloc[-1]["close"], 5)
 
-    if df is None or len(df) < 20:
-        return {"action": "WAIT", "reason": f"Gathering Candles ({len(df) if df is not None else 0}/20)", "entry": current_price, "sl": "-", "tp": "-"}
+    # Increased buffer to 30 to guarantee Bollinger Bands have enough historical data
+    if df is None or len(df) < 30:
+        return {"action": "WAIT", "reason": f"Gathering Candles ({len(df) if df is not None else 0}/30)", "entry": current_price, "sl": "-", "tp": "-"}
 
-    # --- NEW: Predictive Indicators (Bollinger Bands & RSI) ---
-    bbands = df.ta.bbands(length=20, std=2)
-    rsi_series = df.ta.rsi(length=14)
-    atr_series = df.ta.atr(length=14)
+    try:
+        # --- Predictive Indicators (Bollinger Bands & RSI) ---
+        bbands = df.ta.bbands(length=20, std=2)
+        rsi_series = df.ta.rsi(length=14)
+        atr_series = df.ta.atr(length=14)
 
-    # Safety check in case indicators fail to load
-    if bbands is None or bbands.empty or rsi_series is None or atr_series is None:
-        return {"action": "WAIT", "reason": "Calculating Indicators", "entry": current_price, "sl": "-", "tp": "-"}
+        # Safety check in case indicators fail to load
+        if bbands is None or bbands.empty or rsi_series is None or atr_series is None:
+            return {"action": "WAIT", "reason": "Calculating Indicators", "entry": current_price, "sl": "-", "tp": "-"}
 
-    candle_time = df.iloc[-2]["datetime"]
-    open_price = df.iloc[-2]["open"]
-    close = df.iloc[-2]["close"]
+        candle_time = df.iloc[-2]["datetime"]
+        open_price = df.iloc[-2]["open"]
+        close = df.iloc[-2]["close"]
 
-    # Extract Bollinger Band ceilings and floors
-    lower_band = bbands["BBL_20_2.0"].iloc[-2]
-    upper_band = bbands["BBU_20_2.0"].iloc[-2]
-    
-    rsi = rsi_series.iloc[-2]
-    atr = atr_series.iloc[-2]
-
-    sl_distance = 1.0 * atr
-    tp_distance = 1.5 * atr
-
-    # 1. Determine the core momentum
-    action = "WAIT"
-    reason = "No clear reversal setup"
-    
-    # --- NEW: BUY THE BOTTOM ---
-    # Rule: Price pierced the floor, RSI is oversold, and the current candle is green
-    if (open_price < lower_band or close < lower_band) and rsi < 35 and close > open_price:
-        action = "BUY"
-        reason = "Bottom Reversal Bounce (5m)"
+        # FIX: Access Bollinger Band ceilings and floors by numeric column index to prevent KeyError
+        # Column 0 is always Lower Band, Column 2 is always Upper Band
+        lower_band = bbands.iloc[:, 0].iloc[-2]
+        upper_band = bbands.iloc[:, 2].iloc[-2]
         
-    # --- NEW: SELL THE TOP ---
-    # Rule: Price pierced the ceiling, RSI is overbought, and the current candle is red
-    elif (open_price > upper_band or close > upper_band) and rsi > 65 and close < open_price:
-        action = "SELL"
-        reason = "Top Reversal Drop (5m)"
+        rsi = rsi_series.iloc[-2]
+        atr = atr_series.iloc[-2]
 
-    # --- Cooldown Logic Block ---
-    current_time_dt = datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET)
-    
-    if action in ["BUY", "SELL"]:
-        if pair in last_trade_execution_times:
-            time_since_last = current_time_dt - last_trade_execution_times[pair]
-            cooldown_expiry = timedelta(minutes=COOLDOWN_MINUTES)
-            
-            if time_since_last < cooldown_expiry:
-                seconds_left = int((cooldown_expiry - time_since_last).total_seconds())
-                action = "WAIT"
-                reason = f"Cooldown Active ({seconds_left}s remaining)"
+        sl_distance = 1.0 * atr
+        tp_distance = 1.5 * atr
 
-    signal = None
-
-    # 2. Lock the timestamp in memory if a signal is active
-    if action in ["BUY", "SELL"]:
-        signal_id = f"{pair}_{str(candle_time)}_{action}"
-        
-        if signal_id not in signal_timestamps:
-            signal_timestamps[signal_id] = int(time.time())
-            
-        signal = {
-            "action": action,
-            "entry": round(close, 5),
-            "sl": round(close - sl_distance, 5) if action == "BUY" else round(close + sl_distance, 5),
-            "tp": round(close + tp_distance, 5) if action == "BUY" else round(close - tp_distance, 5),
-            "reason": reason,
-            "timestamp": signal_timestamps[signal_id],
-            "candle_time": str(candle_time)
-        }
-    else:
-        return {"action": "WAIT", "reason": reason, "entry": current_price, "sl": "-", "tp": "-"}
-
-    # Database Logging
-    if signal and last_logged_signal.get(pair) != str(candle_time):
-        new_trade = TradeJournal(
-            pair=pair,
-            action=signal["action"],
-            entry_price=signal["entry"],
-            stop_loss=signal["sl"],
-            take_profit=signal["tp"],
-            reason=signal["reason"],
-            timestamp=current_time_dt 
-        )
-        db.add(new_trade)
-        db.commit()
-        last_logged_signal[pair] = str(candle_time)
-        
-        last_trade_execution_times[pair] = current_time_dt
-
-    return signal
-
-@app.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request):
-    return templates.TemplateResponse(request=request, name="index.html")
-
-@app.get("/journal", response_class=HTMLResponse)
-async def journal_page(request: Request, db: Session = Depends(get_db)):
-    trades = db.query(TradeJournal).order_by(TradeJournal.timestamp.desc()).limit(50).all()
-    return templates.TemplateResponse(request=request, name="journal.html", context={"trades": trades})
-
-@app.get("/api/signals")
-async def get_signals(db: Session = Depends(get_db)):
-    signals = {}
-    for pair in PAIRS:
-        df = fetch_market_data(pair)
-        signals[pair] = analyze_strategy(df, pair, db)
-    return signals
+        # 1. Determine the core momentum
