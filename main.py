@@ -68,7 +68,6 @@ def analyze_strategy(data, pair: str, db: Session):
     if df is not None and len(df) > 0:
         current_price = round(df.iloc[-1]["close"], 5)
 
-    # Increased buffer to 30 to guarantee Bollinger Bands have enough historical data
     if df is None or len(df) < 30:
         return {"action": "WAIT", "reason": f"Gathering Candles ({len(df) if df is not None else 0}/30)", "entry": current_price, "sl": "-", "tp": "-"}
 
@@ -78,23 +77,4 @@ def analyze_strategy(data, pair: str, db: Session):
         rsi_series = df.ta.rsi(length=14)
         atr_series = df.ta.atr(length=14)
 
-        # Safety check in case indicators fail to load
         if bbands is None or bbands.empty or rsi_series is None or atr_series is None:
-            return {"action": "WAIT", "reason": "Calculating Indicators", "entry": current_price, "sl": "-", "tp": "-"}
-
-        candle_time = df.iloc[-2]["datetime"]
-        open_price = df.iloc[-2]["open"]
-        close = df.iloc[-2]["close"]
-
-        # FIX: Access Bollinger Band ceilings and floors by numeric column index to prevent KeyError
-        # Column 0 is always Lower Band, Column 2 is always Upper Band
-        lower_band = bbands.iloc[:, 0].iloc[-2]
-        upper_band = bbands.iloc[:, 2].iloc[-2]
-        
-        rsi = rsi_series.iloc[-2]
-        atr = atr_series.iloc[-2]
-
-        sl_distance = 1.0 * atr
-        tp_distance = 1.5 * atr
-
-        # 1. Determine the core momentum
