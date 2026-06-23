@@ -24,13 +24,12 @@ signal_timestamps = {}
 
 # --- Cooldown Tracker ---
 last_trade_execution_times = {}
-COOLDOWN_MINUTES = 5  # Forces the bot to wait 5 minutes (1 candle) before firing again
+COOLDOWN_MINUTES = 5  
 
 # --- Timezone Settings ---
 TIMEZONE_OFFSET = 4  # +4 Hours
 
 def fetch_market_data(symbol: str):
-    # NEW: Added &timezone=UTC to the API call so we have a reliable baseline to add 4 hours to
     url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=5min&outputsize=50&timezone=UTC&apikey={TWELVEDATA_API_KEY}"
     try:
         response = requests.get(url).json()
@@ -43,7 +42,7 @@ def fetch_market_data(symbol: str):
         
         df = pd.DataFrame(response["values"])
         
-        # --- NEW: Timezone Fix (+4 Hours) ---
+        # Timezone Fix (+4 Hours) 
         df["datetime"] = pd.to_datetime(df["datetime"]) + timedelta(hours=TIMEZONE_OFFSET)
         
         for col in ["open", "high", "low", "close"]:
@@ -89,28 +88,20 @@ def analyze_strategy(data, pair: str, db: Session):
     sl_distance = 1.0 * atr
     tp_distance = 1.5 * atr
 
-    # --- NEW: Calculate ATR Exhaustion ---
-    # Find the exact size of the candle's body
-    candle_body_size = abs(close - open_price)
-    # Limit: The candle cannot be larger than 1.5 times the normal ATR
-    max_allowed_size = atr * 1.5 
-
     # 1. Determine the core momentum
     action = "WAIT"
     reason = "No clear 5m momentum"
     
-    # NEW: Added candle_body_size check to prevent buying the top of a massive pump
-    if ema5 > ema13 and rsi > 55 and close > open_price and candle_body_size <= max_allowed_size:
+    # CORRECTED: Removed the restrictive size limits. Bot is free to catch large breakouts.
+    if ema5 > ema13 and rsi > 55 and close > open_price:
         action = "BUY"
         reason = "Fast Bullish Breakout (5m)"
         
-    # NEW: Added candle_body_size check to prevent selling the bottom of a massive dump
-    elif ema5 < ema13 and rsi < 45 and close < open_price and candle_body_size <= max_allowed_size:
+    elif ema5 < ema13 and rsi < 45 and close < open_price:
         action = "SELL"
         reason = "Fast Bearish Breakout (5m)"
 
     # --- Cooldown Logic Block ---
-    # Ensure all server time checks are also on +4 hours
     current_time_dt = datetime.utcnow() + timedelta(hours=TIMEZONE_OFFSET)
     
     if action in ["BUY", "SELL"]:
@@ -153,7 +144,7 @@ def analyze_strategy(data, pair: str, db: Session):
             stop_loss=signal["sl"],
             take_profit=signal["tp"],
             reason=signal["reason"],
-            timestamp=current_time_dt # NEW: Overrides the DB default to force +4 hours
+            timestamp=current_time_dt 
         )
         db.add(new_trade)
         db.commit()
