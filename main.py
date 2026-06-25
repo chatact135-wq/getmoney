@@ -3,9 +3,9 @@ import time
 import requests
 import pandas as pd
 import pandas_ta as ta
+from datetime import datetime, timedelta
 from fastapi import FastAPI, Request, Depends
 from fastapi.responses import HTMLResponse
-from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 from database import engine, SessionLocal, Base, TradeJournal, get_db
@@ -19,99 +19,83 @@ PAIRS = ["EUR/USD", "GBP/USD"]
 # Dynamic memory stores
 last_logged_signal = {} 
 signal_timestamps = {}
+active_trend = {} 
 
 def fetch_market_data(symbol: str):
     url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=5min&outputsize=50&apikey={TWELVEDATA_API_KEY}"
     try:
         response = requests.get(url).json()
         if "status" in response and response["status"] == "error":
-            return {"api_error": response.get("message", "Unknown API Error from TwelveData")}
-        if "values" not in response:
-            return {"api_error": "No price data returned. Check API Key or Credits."}
+            return {"api_error": response.get("message", "Unknown API Error")}
         df = pd.DataFrame(response["values"])
         df["datetime"] = pd.to_datetime(df["datetime"])
-        for col in ["open", "high", "low", "close"]:
-            df[col] = df[col].astype(float)
-        if "volume" in df.columns:
-            df["volume"] = df["volume"].astype(float)
+        for col in ["open", "high", "low", "close"]: df[col] = df[col].astype(float)
         df = df.iloc[::-1].reset_index(drop=True)
         return df
     except Exception as e:
         return {"api_error": f"Server Error: {str(e)}"}
 
 def analyze_strategy(data, pair: str, db: Session):
-    global last_logged_signal, signal_timestamps
+    global last_logged_signal, signal_timestamps, active_trend
+    
+    # 1. TIME FILTER: Stop at 8:30 PM UAE
+    current_time = datetime.utcnow() + timedelta(hours=4)
+    if current_time.hour == 20 and current_time.minute >= 30:
+        return {"action": "WAIT", "reason": "Market Danger Zone (Past 8:30 PM)", "entry": "-", "sl": "-", "tp": "-"}
+
     if isinstance(data, dict) and "api_error" in data:
         return {"action": "WAIT", "reason": data["api_error"], "entry": "-", "sl": "-", "tp": "-"}
+    
     df = data
-    current_price = "-"
-    if df is not None and len(df) > 0:
-        current_price = round(df.iloc[-1]["close"], 5)
-    if df is None or len(df) < 20:
-        return {"action": "WAIT", "reason": f"Gathering Candles ({len(df) if df is not None else 0}/20)", "entry": current_price, "sl": "-", "tp": "-"}
-    ema5_series = df.ta.ema(length=5)
-    ema13_series = df.ta.ema(length=13)
-    rsi_series = df.ta.rsi(length=14)
-    atr_series = df.ta.atr(length=14)
-    candle_time = df.iloc[-2]["datetime"]
+    if df is None or len(df) < 25:
+        return {"action": "WAIT", "reason": "Gathering Data...", "entry": "-", "sl": "-", "tp": "-"}
+    
+    # Indicators
+    ema5 = df.ta.ema(length=5).iloc[-2]
+    ema13 = df.ta.ema(length=13).iloc[-2]
+    rsi = df.ta.rsi(length=14).iloc[-2]
+    atr = df.ta.atr(length=14).iloc[-2]
+    
+    # Bollinger Bands for Volatility Guard
+    bb = df.ta.bbands(length=20, std=2)
+    lower_band = bb['BBL_20_2.0'].iloc[-2]
+    upper_band = bb['BBU_20_2.0'].iloc[-2]
+    
     close = df.iloc[-2]["close"]
-    ema5 = ema5_series.iloc[-2]
-    ema13 = ema13_series.iloc[-2]
-    rsi = rsi_series.iloc[-2]
-    atr = atr_series.iloc[-2]
-    sl_distance = 1.0 * atr
-    tp_distance = 1.5 * atr
+    candle_time = df.iloc[-2]["datetime"]
+    
     action = "WAIT"
-    reason = "No clear 5m momentum"
-    if ema5 > ema13 and rsi > 55:
+    reason = "No clear momentum"
+
+    # 2. TREND LOCK + BOLLINGER FILTER
+    # BUY: Only if EMAs cross, RSI > 55, not already buying, AND price isn't at the ceiling
+    if ema5 > ema13 and rsi > 55 and active_trend.get(pair) != "BUY" and close < upper_band:
         action = "BUY"
-        reason = "Fast Bullish Breakout (5m)"
-    elif ema5 < ema13 and rsi < 45:
+        active_trend[pair] = "BUY"
+        reason = "Bullish Breakout (BB Filtered)"
+            
+    # SELL: Only if EMAs cross, RSI < 45, not already selling, AND price isn't at the floor
+    elif ema5 < ema13 and rsi < 45 and active_trend.get(pair) != "SELL" and close > lower_band:
         action = "SELL"
-        reason = "Fast Bearish Breakout (5m)"
-    signal = None
+        active_trend[pair] = "SELL"
+        reason = "Bearish Breakout (BB Filtered)"
+
     if action in ["BUY", "SELL"]:
-        signal_id = f"{pair}_{str(candle_time)}_{action}"
-        if signal_id not in signal_timestamps:
-            signal_timestamps[signal_id] = int(time.time())
         signal = {
-            "action": action,
-            "entry": round(close, 5),
-            "sl": round(close - sl_distance, 5) if action == "BUY" else round(close + sl_distance, 5),
-            "tp": round(close + tp_distance, 5) if action == "BUY" else round(close - tp_distance, 5),
-            "reason": reason,
-            "timestamp": signal_timestamps[signal_id],
-            "candle_time": str(candle_time)
+            "action": action, "entry": round(close, 5),
+            "sl": round(close - (1.0*atr) if action == "BUY" else close + (1.0*atr), 5),
+            "tp": round(close + (1.5*atr) if action == "BUY" else close - (1.5*atr), 5),
+            "reason": reason, "candle_time": str(candle_time)
         }
-    else:
-        return {"action": "WAIT", "reason": reason, "entry": current_price, "sl": "-", "tp": "-"}
-    if signal and last_logged_signal.get(pair) != str(candle_time):
-        new_trade = TradeJournal(
-            pair=pair,
-            action=signal["action"],
-            entry_price=signal["entry"],
-            stop_loss=signal["sl"],
-            take_profit=signal["tp"],
-            reason=signal["reason"]
-        )
-        db.add(new_trade)
-        db.commit()
-        last_logged_signal[pair] = str(candle_time)
-    return signal
+        
+        # Log to DB
+        if last_logged_signal.get(pair) != str(candle_time):
+            db.add(TradeJournal(pair=pair, action=action, entry_price=signal["entry"], 
+                                stop_loss=signal["sl"], take_profit=signal["tp"], reason=reason))
+            db.commit()
+            last_logged_signal[pair] = str(candle_time)
+        return signal
+    
+    return {"action": "WAIT", "reason": reason, "entry": round(close, 5), "sl": "-", "tp": "-"}
 
-@app.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request):
-    return templates.TemplateResponse(request=request, name="index.html")
-
-@app.get("/journal", response_class=HTMLResponse)
-async def journal_page(request: Request, db: Session = Depends(get_db)):
-    trades = db.query(TradeJournal).order_by(TradeJournal.timestamp.desc()).limit(50).all()
-    return templates.TemplateResponse(request=request, name="journal.html", context={"trades": trades})
-
-@app.get("/api/signals")
-async def get_signals(db: Session = Depends(get_db)):
-    signals = {}
-    for pair in PAIRS:
-        df = fetch_market_data(pair)
-        signals[pair] = analyze_strategy(df, pair, db)
-    return signals
+# ... [Keep your existing FastAPI app routes] ...
