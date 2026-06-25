@@ -16,7 +16,7 @@ templates = Jinja2Templates(directory="templates")
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "YOUR_API_KEY_HERE")
 PAIRS = ["EUR/USD", "GBP/USD"]
 
-# Dynamic memory stores
+# Memory stores
 last_logged_signal = {} 
 signal_timestamps = {}
 active_trend = {} 
@@ -56,10 +56,11 @@ def analyze_strategy(data, pair: str, db: Session):
     rsi = df.ta.rsi(length=14).iloc[-2]
     atr = df.ta.atr(length=14).iloc[-2]
     
-    # Bollinger Bands for Volatility Guard
+    # ROBUST Bollinger Bands (Prevents KeyError)
     bb = df.ta.bbands(length=20, std=2)
-    lower_band = bb['BBL_20_2.0'].iloc[-2]
-    upper_band = bb['BBU_20_2.0'].iloc[-2]
+    bb_cols = bb.columns
+    lower_band = bb[[c for c in bb_cols if "BBL" in c][0]].iloc[-2]
+    upper_band = bb[[c for c in bb_cols if "BBU" in c][0]].iloc[-2]
     
     close = df.iloc[-2]["close"]
     candle_time = df.iloc[-2]["datetime"]
@@ -68,13 +69,11 @@ def analyze_strategy(data, pair: str, db: Session):
     reason = "No clear momentum"
 
     # 2. TREND LOCK + BOLLINGER FILTER
-    # BUY: Only if EMAs cross, RSI > 55, not already buying, AND price isn't at the ceiling
     if ema5 > ema13 and rsi > 55 and active_trend.get(pair) != "BUY" and close < upper_band:
         action = "BUY"
         active_trend[pair] = "BUY"
         reason = "Bullish Breakout (BB Filtered)"
             
-    # SELL: Only if EMAs cross, RSI < 45, not already selling, AND price isn't at the floor
     elif ema5 < ema13 and rsi < 45 and active_trend.get(pair) != "SELL" and close > lower_band:
         action = "SELL"
         active_trend[pair] = "SELL"
@@ -98,4 +97,19 @@ def analyze_strategy(data, pair: str, db: Session):
     
     return {"action": "WAIT", "reason": reason, "entry": round(close, 5), "sl": "-", "tp": "-"}
 
-# ... [Keep your existing FastAPI app routes] ...
+@app.get("/", response_class=HTMLResponse)
+async def dashboard(request: Request):
+    return templates.TemplateResponse(request=request, name="index.html")
+
+@app.get("/journal", response_class=HTMLResponse)
+async def journal_page(request: Request, db: Session = Depends(get_db)):
+    trades = db.query(TradeJournal).order_by(TradeJournal.timestamp.desc()).limit(50).all()
+    return templates.TemplateResponse(request=request, name="journal.html", context={"trades": trades})
+
+@app.get("/api/signals")
+async def get_signals(db: Session = Depends(get_db)):
+    signals = {}
+    for pair in PAIRS:
+        df = fetch_market_data(pair)
+        signals[pair] = analyze_strategy(df, pair, db)
+    return signals
