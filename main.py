@@ -38,18 +38,19 @@ def fetch_market_data(symbol: str):
 def analyze_strategy(data, pair: str, db: Session):
     global last_logged_signal, signal_timestamps, active_trend
     
-    # 1. TIME FILTER: Stop at 8:30 PM UAE
+    # 1. TIME FILTER: Stop at 8:30 PM UAE (20:30)
     current_time = datetime.utcnow() + timedelta(hours=4)
     if current_time.hour == 20 and current_time.minute >= 30:
-        return {"action": "WAIT", "reason": "Market Danger Zone (Past 8:30 PM)", "entry": "-", "sl": "-", "tp": "-"}
+        return {"action": "WAIT", "reason": "Market Danger Zone (Past 8:30 PM)", "timestamp": 0}
 
     if isinstance(data, dict) and "api_error" in data:
-        return {"action": "WAIT", "reason": data["api_error"], "entry": "-", "sl": "-", "tp": "-"}
+        return {"action": "WAIT", "reason": data["api_error"], "timestamp": 0}
     
     df = data
     if df is None or len(df) < 25:
-        return {"action": "WAIT", "reason": "Gathering Data...", "entry": "-", "sl": "-", "tp": "-"}
+        return {"action": "WAIT", "reason": "Gathering Data...", "timestamp": 0}
     
+    # Indicators
     ema5 = df.ta.ema(length=5).iloc[-2]
     ema13 = df.ta.ema(length=13).iloc[-2]
     rsi = df.ta.rsi(length=14).iloc[-2]
@@ -67,7 +68,7 @@ def analyze_strategy(data, pair: str, db: Session):
     action = "WAIT"
     reason = "No clear momentum"
 
-    # TREND LOCK + BOLLINGER FILTER
+    # 2. TREND LOCK + BOLLINGER FILTER
     if ema5 > ema13 and rsi > 55 and active_trend.get(pair) != "BUY" and close < upper_band:
         action = "BUY"
         active_trend[pair] = "BUY"
@@ -78,14 +79,22 @@ def analyze_strategy(data, pair: str, db: Session):
         active_trend[pair] = "SELL"
         reason = "Bearish Breakout (BB Filtered)"
 
+    # Signal Timestamping
     if action in ["BUY", "SELL"]:
+        signal_id = f"{pair}_{str(candle_time)}_{action}"
+        if signal_id not in signal_timestamps:
+            signal_timestamps[signal_id] = int(time.time())
+        
         signal = {
-            "action": action, "entry": round(close, 5),
+            "action": action, 
+            "entry": round(close, 5),
             "sl": round(close - (1.0*atr) if action == "BUY" else close + (1.0*atr), 5),
             "tp": round(close + (1.5*atr) if action == "BUY" else close - (1.5*atr), 5),
-            "reason": reason, "candle_time": str(candle_time)
+            "reason": reason, 
+            "timestamp": signal_timestamps[signal_id]
         }
         
+        # Log to DB
         if last_logged_signal.get(pair) != str(candle_time):
             db.add(TradeJournal(pair=pair, action=action, entry_price=signal["entry"], 
                                 stop_loss=signal["sl"], take_profit=signal["tp"], reason=reason))
@@ -93,7 +102,7 @@ def analyze_strategy(data, pair: str, db: Session):
             last_logged_signal[pair] = str(candle_time)
         return signal
     
-    return {"action": "WAIT", "reason": reason, "entry": round(close, 5), "sl": "-", "tp": "-"}
+    return {"action": "WAIT", "reason": reason, "timestamp": 0}
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
