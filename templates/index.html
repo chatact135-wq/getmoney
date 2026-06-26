@@ -98,6 +98,20 @@
 
     <div class="grid" id="signals-container">
         </div>
+<script>
+    let timeLeft = 30;
+    const timerElement = document.getElementById("refresh-timer");
+
+    function updateTimer() {
+        timeLeft--;
+        if (timeLeft <= 0) {
+            location.reload();
+        } else {
+            timerElement.innerText = "Next Refresh In: " + timeLeft + "s";
+        }
+    }
+    setInterval(updateTimer, 1000);
+</script>
 
     <script>
         let countdown = 45;
