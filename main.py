@@ -50,13 +50,12 @@ def analyze_strategy(data, pair: str, db: Session):
     if df is None or len(df) < 25:
         return {"action": "WAIT", "reason": "Gathering Data...", "entry": "-", "sl": "-", "tp": "-"}
     
-    # Indicators
     ema5 = df.ta.ema(length=5).iloc[-2]
     ema13 = df.ta.ema(length=13).iloc[-2]
     rsi = df.ta.rsi(length=14).iloc[-2]
     atr = df.ta.atr(length=14).iloc[-2]
     
-    # ROBUST Bollinger Bands (Prevents KeyError)
+    # ROBUST Bollinger Bands
     bb = df.ta.bbands(length=20, std=2)
     bb_cols = bb.columns
     lower_band = bb[[c for c in bb_cols if "BBL" in c][0]].iloc[-2]
@@ -68,7 +67,7 @@ def analyze_strategy(data, pair: str, db: Session):
     action = "WAIT"
     reason = "No clear momentum"
 
-    # 2. TREND LOCK + BOLLINGER FILTER
+    # TREND LOCK + BOLLINGER FILTER
     if ema5 > ema13 and rsi > 55 and active_trend.get(pair) != "BUY" and close < upper_band:
         action = "BUY"
         active_trend[pair] = "BUY"
@@ -87,7 +86,6 @@ def analyze_strategy(data, pair: str, db: Session):
             "reason": reason, "candle_time": str(candle_time)
         }
         
-        # Log to DB
         if last_logged_signal.get(pair) != str(candle_time):
             db.add(TradeJournal(pair=pair, action=action, entry_price=signal["entry"], 
                                 stop_loss=signal["sl"], take_profit=signal["tp"], reason=reason))
