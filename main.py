@@ -71,19 +71,19 @@ def analyze_strategy(data, pair: str, db: Session):
     if active_trend.get(pair) == "SELL" and not (ema5 > ema13):
         return {"action": "WAIT", "reason": "Wait: Trend locked (SELL active)", "entry": round(close, 5), "sl": "-", "tp": "-", "timestamp": 0}
     
-    # BUY CONDITIONS
-    if ema5 > ema13 and rsi > 55 and close < upper_band:
+    # LESS CONSERVATIVE: RSI Thresholds lowered to 52 and 48
+    if ema5 > ema13 and rsi > 52 and close < upper_band:
         action = "BUY"
         active_trend[pair] = "BUY"
         reason = "Bullish Breakout"
     # SELL CONDITIONS
-    elif ema5 < ema13 and rsi < 45 and close > lower_band:
+    elif ema5 < ema13 and rsi < 48 and close > lower_band:
         action = "SELL"
         active_trend[pair] = "SELL"
         reason = "Bearish Breakout"
     else:
         # Identify specifically why it failed
-        if not (rsi > 55 or rsi < 45): reason = "Wait: RSI Neutral"
+        if not (rsi > 52 or rsi < 48): reason = "Wait: RSI Neutral"
         elif not (ema5 > ema13 or ema5 < ema13): reason = "Wait: EMAs flat"
         elif close >= upper_band: reason = "Wait: Price hitting ceiling"
         elif close <= lower_band: reason = "Wait: Price hitting floor"
@@ -95,9 +95,10 @@ def analyze_strategy(data, pair: str, db: Session):
     signal_id = f"{pair}_{str(candle_time)}_{action}"
     if signal_id not in signal_timestamps: signal_timestamps[signal_id] = int(time.time())
     
+    # WIDER SL: Using 1.3 * ATR instead of 1.0 * ATR
     signal = {
         "action": action, "entry": round(close, 5),
-        "sl": round(close - (1.0*atr) if action == "BUY" else close + (1.0*atr), 5),
+        "sl": round(close - (1.3*atr) if action == "BUY" else close + (1.3*atr), 5),
         "tp": round(close + (1.5*atr) if action == "BUY" else close - (1.5*atr), 5),
         "reason": reason, "timestamp": signal_timestamps[signal_id]
     }
