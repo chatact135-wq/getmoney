@@ -31,8 +31,10 @@ async def get_meta_api():
     global meta_api_client, connection
     if meta_api_client is None:
         meta_api_client = MetaApi(TOKEN)
-        account = await meta_api_client.get_account(ACCOUNT_ID)
-        # We need a streaming connection for order execution
+        # Access the account via the metatrader_account_api property
+        account = await meta_api_client.metatrader_account_api.get_account(ACCOUNT_ID)
+        
+        # Now get the streaming connection from that account object
         connection = account.get_streaming_connection()
         await connection.connect()
         await connection.wait_synchronized()
