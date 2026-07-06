@@ -10,31 +10,6 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 from database import engine, SessionLocal, Base, TradeJournal, get_db
 
-from metaapi_cloud_sdk import MetaApi
-
-# Your configuration
-TOKEN = 'YOUR_API_TOKEN'
-ACCOUNT_ID = 'YOUR_ACCOUNT_ID'
-
-# Initialize the connection
-meta_api = MetaApi(TOKEN)
-
-async def connect_to_account():
-    # Retrieve the account
-    account = await meta_api.get_account(ACCOUNT_ID)
-    
-    # Deploy/Connect
-    if account.connection_status != 'CONNECTED':
-        print("Deploying account...")
-        await account.deploy()
-        
-    # Wait for connection
-    print("Waiting for API to connect...")
-    await account.wait_connected()
-    print("Successfully connected to MetaApi!")
-
-# You will call this function at the start of your bot loop
-
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
@@ -62,7 +37,7 @@ def fetch_market_data(symbol: str):
 
 def analyze_strategy(data, pair: str, db: Session):
     global last_logged_signal, signal_timestamps, active_trend
-    
+
     # 1. TIME FILTER: Stop at 8:30 PM UAE (20:30)
     current_time = datetime.utcnow() + timedelta(hours=4)
     if current_time.hour == 20 and current_time.minute >= 30:
@@ -70,64 +45,69 @@ def analyze_strategy(data, pair: str, db: Session):
 
     if isinstance(data, dict) and "api_error" in data:
         return {"action": "WAIT", "reason": data["api_error"], "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
-    
+
     df = data
     if df is None or len(df) < 25:
         return {"action": "WAIT", "reason": "Wait: Gathering data", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
-    
+
     # Indicators
     ema5 = df.ta.ema(length=5).iloc[-2]
     ema13 = df.ta.ema(length=13).iloc[-2]
     rsi = df.ta.rsi(length=14).iloc[-2]
     atr = df.ta.atr(length=14).iloc[-2]
-    
+
     # ROBUST Bollinger Bands
     bb = df.ta.bbands(length=20, std=2)
     bb_cols = bb.columns
     lower_band = bb[[c for c in bb_cols if "BBL" in c][0]].iloc[-2]
     upper_band = bb[[c for c in bb_cols if "BBU" in c][0]].iloc[-2]
-    
+
     close = df.iloc[-2]["close"]
     candle_time = df.iloc[-2]["datetime"]
-    
+
     # DIAGNOSTIC LOGIC: Check why it's waiting
     if active_trend.get(pair) == "BUY" and not (ema5 < ema13):
         return {"action": "WAIT", "reason": "Wait: Trend locked (BUY active)", "entry": round(close, 5), "sl": "-", "tp": "-", "timestamp": 0}
     if active_trend.get(pair) == "SELL" and not (ema5 > ema13):
         return {"action": "WAIT", "reason": "Wait: Trend locked (SELL active)", "entry": round(close, 5), "sl": "-", "tp": "-", "timestamp": 0}
-    
+
+    # BUY CONDITIONS
+    if ema5 > ema13 and rsi > 55 and close < upper_band:
     # LESS CONSERVATIVE: RSI Thresholds lowered to 52 and 48
     if ema5 > ema13 and rsi > 52 and close < upper_band:
         action = "BUY"
         active_trend[pair] = "BUY"
         reason = "Bullish Breakout"
     # SELL CONDITIONS
+    elif ema5 < ema13 and rsi < 45 and close > lower_band:
     elif ema5 < ema13 and rsi < 48 and close > lower_band:
         action = "SELL"
         active_trend[pair] = "SELL"
         reason = "Bearish Breakout"
     else:
         # Identify specifically why it failed
+        if not (rsi > 55 or rsi < 45): reason = "Wait: RSI Neutral"
         if not (rsi > 52 or rsi < 48): reason = "Wait: RSI Neutral"
         elif not (ema5 > ema13 or ema5 < ema13): reason = "Wait: EMAs flat"
         elif close >= upper_band: reason = "Wait: Price hitting ceiling"
         elif close <= lower_band: reason = "Wait: Price hitting floor"
         else: reason = "Wait: No signal"
-        
+
         return {"action": "WAIT", "reason": reason, "entry": round(close, 5), "sl": "-", "tp": "-", "timestamp": 0}
 
     # If we reached here, action is BUY or SELL
     signal_id = f"{pair}_{str(candle_time)}_{action}"
     if signal_id not in signal_timestamps: signal_timestamps[signal_id] = int(time.time())
-    
+
     # WIDER SL: Using 1.3 * ATR instead of 1.0 * ATR
     signal = {
         "action": action, "entry": round(close, 5),
+        "sl": round(close - (1.0*atr) if action == "BUY" else close + (1.0*atr), 5),
         "sl": round(close - (1.3*atr) if action == "BUY" else close + (1.3*atr), 5),
         "tp": round(close + (1.5*atr) if action == "BUY" else close - (1.5*atr), 5),
         "reason": reason, "timestamp": signal_timestamps[signal_id]
     }
-    
+
     # Log to DB
     if last_logged_signal.get(pair) != str(candle_time):
         db.add(TradeJournal(pair=pair, action=action, entry_price=signal["entry"], 
