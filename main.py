@@ -10,6 +10,31 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 from database import engine, SessionLocal, Base, TradeJournal, get_db
 
+from metaapi_cloud_sdk import MetaApi
+
+# Your configuration
+TOKEN = 'YOUR_API_TOKEN'
+ACCOUNT_ID = 'YOUR_ACCOUNT_ID'
+
+# Initialize the connection
+meta_api = MetaApi(TOKEN)
+
+async def connect_to_account():
+    # Retrieve the account
+    account = await meta_api.get_account(ACCOUNT_ID)
+    
+    # Deploy/Connect
+    if account.connection_status != 'CONNECTED':
+        print("Deploying account...")
+        await account.deploy()
+        
+    # Wait for connection
+    print("Waiting for API to connect...")
+    await account.wait_connected()
+    print("Successfully connected to MetaApi!")
+
+# You will call this function at the start of your bot loop
+
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
