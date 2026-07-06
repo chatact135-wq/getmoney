@@ -6,3 +6,4 @@ pandas-ta
 jinja2
 sqlalchemy
 psycopg2-binary
+metaapi-cloud-sdk
