@@ -6,15 +6,12 @@ import pandas_ta as ta
 import asyncio
 from datetime import datetime, timedelta
 from fastapi import FastAPI, Request, Depends
-from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
-from database import engine, SessionLocal, Base, TradeJournal, get_db
+from database import get_db, TradeJournal
 from metaapi_cloud_sdk import MetaApi
 
-# --- CONFIGURATION (Reading from Environment Variables) ---
-# Ensure these keys (METAAPI_TOKEN, METAAPI_ACCOUNT_ID, TWELVEDATA_API_KEY)
-# are added to your Railway Service -> Variables tab.
+# --- CONFIGURATION ---
 TOKEN = os.getenv("METAAPI_TOKEN")
 ACCOUNT_ID = os.getenv("METAAPI_ACCOUNT_ID")
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY")
@@ -23,31 +20,48 @@ app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
 PAIRS = ["EUR/USD", "GBP/USD"]
-last_logged_signal = {} 
+last_logged_signal = {}
 signal_timestamps = {}
-active_trend = {} 
+active_trend = {}
 
 meta_api_client = None
+connection = None
 
 async def get_meta_api():
-    global meta_api_client
+    global meta_api_client, connection
     if meta_api_client is None:
         meta_api_client = MetaApi(TOKEN)
-    return meta_api_client
+        account = await meta_api_client.get_account(ACCOUNT_ID)
+        # We need a streaming connection for order execution
+        connection = account.get_streaming_connection()
+        await connection.connect()
+        await connection.wait_synchronized()
+    return connection
+
+async def execute_trade(action, symbol, entry_price):
+    try:
+        conn = await get_meta_api()
+        # Prevent redundant trades: check if position already exists for this pair
+        positions = conn.terminal_state.positions
+        if any(p['symbol'] == symbol.replace('/', '') for p in positions):
+            return None
+
+        # Risk Management: TP 18 moves, SL 50 moves (1 move = 0.0001)
+        move = 0.0001
+        if action == "BUY":
+            tp = round(entry_price + (18 * move), 5)
+            sl = round(entry_price - (50 * move), 5)
+            return await conn.create_market_buy_order(symbol.replace('/', ''), 0.1, sl, tp)
+        else:
+            tp = round(entry_price - (18 * move), 5)
+            sl = round(entry_price + (50 * move), 5)
+            return await conn.create_market_sell_order(symbol.replace('/', ''), 0.1, sl, tp)
+    except Exception as e:
+        print(f"Trade execution failed: {e}")
 
 @app.on_event("startup")
 async def startup_event():
-    try:
-        api = await get_meta_api()
-        account = await api.get_account(ACCOUNT_ID)
-        if account.connection_status != 'CONNECTED':
-            print("Deploying account to MetaApi...")
-            await account.deploy()
-        print("Waiting for MetaApi connection...")
-        await account.wait_connected()
-        print("Successfully connected to MetaApi!")
-    except Exception as e:
-        print(f"Failed to connect to MetaApi: {e}")
+    await get_meta_api()
 
 def fetch_market_data(symbol: str):
     url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=5min&outputsize=50&apikey={TWELVEDATA_API_KEY}"
@@ -66,7 +80,6 @@ def fetch_market_data(symbol: str):
 def analyze_strategy(data, pair: str, db: Session):
     global last_logged_signal, signal_timestamps, active_trend
     
-    # 1. TIME FILTER
     current_time = datetime.utcnow() + timedelta(hours=4)
     if current_time.hour == 20 and current_time.minute >= 30:
         return {"action": "WAIT", "reason": "Paused: Time limit (8:30 PM)", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
@@ -83,9 +96,8 @@ def analyze_strategy(data, pair: str, db: Session):
     rsi = df.ta.rsi(length=14).iloc[-2]
     atr = df.ta.atr(length=14).iloc[-2]
     bb = df.ta.bbands(length=20, std=2)
-    bb_cols = bb.columns
-    lower_band = bb[[c for c in bb_cols if "BBL" in c][0]].iloc[-2]
-    upper_band = bb[[c for c in bb_cols if "BBU" in c][0]].iloc[-2]
+    lower_band = bb[[c for c in bb.columns if "BBL" in c][0]].iloc[-2]
+    upper_band = bb[[c for c in bb.columns if "BBU" in c][0]].iloc[-2]
     
     close = df.iloc[-2]["close"]
     candle_time = df.iloc[-2]["datetime"]
@@ -102,31 +114,19 @@ def analyze_strategy(data, pair: str, db: Session):
     else:
         return {"action": "WAIT", "reason": "No signal", "entry": round(close, 5), "sl": "-", "tp": "-", "timestamp": 0}
 
+    # Execute the automated trade
+    asyncio.create_task(execute_trade(action, pair, close))
+
     signal_id = f"{pair}_{str(candle_time)}_{action}"
     if signal_id not in signal_timestamps: signal_timestamps[signal_id] = int(time.time())
     
-    signal = {
-        "action": action, "entry": round(close, 5),
-        "sl": round(close - (1.3*atr) if action == "BUY" else close + (1.3*atr), 5),
-        "tp": round(close + (1.5*atr) if action == "BUY" else close - (1.5*atr), 5),
-        "reason": reason, "timestamp": signal_timestamps[signal_id]
-    }
+    signal = {"action": action, "entry": round(close, 5), "reason": reason, "timestamp": signal_timestamps[signal_id]}
     
     if last_logged_signal.get(pair) != str(candle_time):
-        db.add(TradeJournal(pair=pair, action=action, entry_price=signal["entry"], 
-                            stop_loss=signal["sl"], take_profit=signal["tp"], reason=reason))
+        db.add(TradeJournal(pair=pair, action=action, entry_price=signal["entry"], reason=reason))
         db.commit()
         last_logged_signal[pair] = str(candle_time)
     return signal
-
-@app.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request):
-    return templates.TemplateResponse(request=request, name="index.html")
-
-@app.get("/journal", response_class=HTMLResponse)
-async def journal_page(request: Request, db: Session = Depends(get_db)):
-    trades = db.query(TradeJournal).order_by(TradeJournal.timestamp.desc()).limit(50).all()
-    return templates.TemplateResponse(request=request, name="journal.html", context={"trades": trades})
 
 @app.get("/api/signals")
 async def get_signals(db: Session = Depends(get_db)):
