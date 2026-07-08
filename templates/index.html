@@ -2,191 +2,143 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0"> 
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Quant Signal System</title>
     <style>
         :root {
-            --bg: #0f172a;
+            --bg-dark: #0f172a;
             --card-bg: #1e293b;
-            --text-main: #f8fafc;
+            --text-main: #e2e8f0;
             --text-muted: #94a3b8;
-            --green: #10b981;
-            --red: #ef4444;
-            --yellow: #fbbf24;
+            --buy-color: #10b981;
+            --sell-color: #ef4444;
+            --wait-color: #fbbf24;
         }
         body {
-            background-color: var(--bg);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-dark);
             color: var(--text-main);
-            font-family: system-ui, -apple-system, sans-serif;
             margin: 0;
-            padding: 15px;
+            padding: 20px;
         }
-        /* Header Setup */
-        .header-container {
+        .header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 25px;
-            padding-bottom: 15px;
+            margin-bottom: 30px;
             border-bottom: 1px solid #334155;
-            flex-wrap: wrap; 
-            gap: 15px;
+            padding-bottom: 15px;
         }
-        .header-container h1 { margin: 0; font-size: 1.5rem; }
-        .header-controls { display: flex; align-items: center; gap: 15px; flex-wrap: wrap; }
-        .btn {
-            background-color: #334155;
+        .header h1 { margin: 0; font-size: 24px; letter-spacing: 1px; }
+        .nav-btn {
+            background: #334155;
             color: white;
             text-decoration: none;
             padding: 8px 16px;
             border-radius: 6px;
-            font-size: 0.9rem;
-            transition: background 0.2s;
+            font-size: 14px;
         }
-        .btn:hover { background-color: #475569; }
-        .timer { color: #2dd4bf; font-weight: bold; }
-        
-        /* Grid Setup */
-        .grid {
+        /* Grid Layout for Multiple Assets */
+        #signals-container {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
             gap: 20px;
         }
         .card {
             background-color: var(--card-bg);
-            border-radius: 10px;
+            border-radius: 12px;
             padding: 20px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
             border: 1px solid #334155;
         }
-        .card h2 { margin-top: 0; font-size: 1.2rem; color: var(--text-muted); }
-        
-        /* Signal Header with Timer */
-        .signal-header {
+        .card-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             margin-bottom: 15px;
         }
-        .signal-action { font-size: 2rem; font-weight: bold; }
-        .time-ago { font-size: 0.9rem; color: var(--yellow); font-weight: bold; }
+        .pair-name { font-weight: bold; font-size: 18px; color: var(--text-muted); }
+        .action-text { font-size: 28px; font-weight: 800; margin: 10px 0; }
         
-        .WAIT { color: var(--text-muted); }
-        .BUY { color: var(--green); }
-        .SELL { color: var(--red); }
-        
-        .data-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-        .data-box { background: #0f172a; padding: 12px; border-radius: 6px; font-size: 0.9rem; }
-        .tp { color: var(--green); }
-        .sl { color: var(--red); }
+        .BUY { color: var(--buy-color); }
+        .SELL { color: var(--sell-color); }
+        .WAIT { color: var(--wait-color); }
 
-        /* Mobile Responsive */
-        @media (max-width: 600px) {
-            .header-container { flex-direction: column; align-items: flex-start; }
-            .data-grid { grid-template-columns: 1fr; }
-            .card h2 { font-size: 1.1rem; }
+        .data-row {
+            background: #0f172a;
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            font-size: 14px;
+            display: flex;
+            justify-content: space-between;
         }
+        .data-label { color: var(--text-muted); }
     </style>
 </head>
 <body>
-    <div class="header-container">
+
+    <div class="header">
         <h1>QUANT SIGNAL SYSTEM</h1>
-        <div class="header-controls">
-            <a href="/journal" class="btn">View Trading Journal</a>
-            <div class="timer" id="timerDisplay">Next Refresh In: 45s</div>
+        <div>
+            <a href="/journal" class="nav-btn">View Trading Journal</a>
+            <span style="margin-left: 15px; color: #10b981; font-size: 14px;" id="refresh-timer">Refreshing...</span>
         </div>
     </div>
 
-    <div class="grid" id="signals-container">
+    <div id="signals-container">
         </div>
-<script>
-    let timeLeft = 30;
-    const timerElement = document.getElementById("refresh-timer");
-
-    function updateTimer() {
-        timeLeft--;
-        if (timeLeft <= 0) {
-            location.reload();
-        } else {
-            timerElement.innerText = "Next Refresh In: " + timeLeft + "s";
-        }
-    }
-    setInterval(updateTimer, 1000);
-</script>
 
     <script>
-        let countdown = 45;
-        
         async function fetchSignals() {
             try {
                 const response = await fetch('/api/signals');
                 const data = await response.json();
                 
                 const container = document.getElementById('signals-container');
-                container.innerHTML = '';
-                
+                container.innerHTML = ''; 
+
                 for (const [pair, signal] of Object.entries(data)) {
+                    // Create the Card UI
                     const card = document.createElement('div');
                     card.className = 'card';
                     
-                    let actionClass = signal.action === 'BUY' ? 'BUY' : signal.action === 'SELL' ? 'SELL' : 'WAIT';
+                    const actionClass = signal.action; 
                     
-                    // Create the live timestamp badge only if it's a BUY or SELL
-                    let timeBadge = '';
-                    if (signal.action !== 'WAIT' && signal.timestamp) {
-                        timeBadge = `<div class="time-ago" data-timestamp="${signal.timestamp}">Triggered: Just now</div>`;
-                    }
-
-                    // Also fixed the (15M) text to say (5M) here!
                     card.innerHTML = `
-                        <h2>${pair} (5M)</h2>
-                        <div class="signal-header">
-                            <div class="signal-action ${actionClass}">${signal.action}</div>
-                            ${timeBadge}
+                        <div class="card-header">
+                            <div class="pair-name">${pair} (5M)</div>
+                            <div style="font-size: 12px; color: #fbbf24;">Live</div>
                         </div>
-                        <div class="data-grid">
-                            <div class="data-box">Entry: ${signal.entry}</div>
-                            <div class="data-box">Reason: ${signal.reason}</div>
-                            <div class="data-box tp">Take Profit: ${signal.tp}</div>
-                            <div class="data-box sl">Stop Loss: ${signal.sl}</div>
+                        <div class="action-text ${actionClass}">${signal.action}</div>
+                        
+                        <div class="data-row">
+                            <span class="data-label">Entry:</span>
+                            <span>${signal.entry !== "-" ? signal.entry : "Waiting"}</span>
+                        </div>
+                        <div class="data-row">
+                            <span class="data-label">Reason:</span>
+                            <span>${signal.reason}</span>
+                        </div>
+                        <div class="data-row" style="border-left: 3px solid #10b981;">
+                            <span class="data-label">Take Profit:</span>
+                            <span>${signal.tp}</span>
+                        </div>
+                        <div class="data-row" style="border-left: 3px solid #ef4444;">
+                            <span class="data-label">Stop Loss:</span>
+                            <span>${signal.sl}</span>
                         </div>
                     `;
                     container.appendChild(card);
                 }
-            } catch (e) {
-                console.error("Failed to fetch signals", e);
+            } catch (error) {
+                console.error('Error fetching signals:', error);
             }
         }
 
-        // Main API Refresh Timer
-        setInterval(() => {
-            countdown--;
-            if (countdown <= 0) {
-                countdown = 45;
-                fetchSignals();
-            }
-            document.getElementById('timerDisplay').innerText = `Next Refresh In: ${countdown}s`;
-        }, 1000);
-
-        // Live 'Time Ago' Counter (Updates independently every second)
-        setInterval(() => {
-            const now = Math.floor(Date.now() / 1000);
-            document.querySelectorAll('.time-ago').forEach(el => {
-                const ts = parseInt(el.getAttribute('data-timestamp'));
-                if (!ts) return;
-                
-                const diff = now - ts;
-                if (diff < 60) {
-                    el.innerText = `Triggered: ${diff}s ago`;
-                } else {
-                    const mins = Math.floor(diff / 60);
-                    const secs = diff % 60;
-                    el.innerText = `Triggered: ${mins}m ${secs}s ago`;
-                }
-            });
-        }, 1000);
-
-        // Initial fetch on load
+        // Fetch immediately, then every 30 seconds
         fetchSignals();
+        setInterval(fetchSignals, 30000);
     </script>
 </body>
 </html>
