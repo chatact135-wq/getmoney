@@ -14,7 +14,9 @@ app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "YOUR_API_KEY_HERE")
-PAIRS = ["EUR/USD", "GBP/USD"]
+
+# ADDED XAU/USD HERE
+PAIRS = ["EUR/USD", "GBP/USD", "XAU/USD"]
 
 # Memory stores
 last_logged_signal = {} 
@@ -56,7 +58,7 @@ def analyze_strategy(data, pair: str, db: Session):
     rsi = df.ta.rsi(length=14).iloc[-2]
     atr = df.ta.atr(length=14).iloc[-2]
 
-    # ROBUST Bollinger Bands
+    # Bollinger Bands
     bb = df.ta.bbands(length=20, std=2)
     bb_cols = bb.columns
     lower_band = bb[[c for c in bb_cols if "BBL" in c][0]].iloc[-2]
@@ -67,9 +69,9 @@ def analyze_strategy(data, pair: str, db: Session):
 
     # DIAGNOSTIC LOGIC
     if active_trend.get(pair) == "BUY" and not (ema5 < ema13):
-        return {"action": "WAIT", "reason": "Wait: Trend locked (BUY active)", "entry": round(close, 5), "sl": "-", "tp": "-", "timestamp": 0}
+        return {"action": "WAIT", "reason": "Wait: Trend locked (BUY active)", "entry": close, "sl": "-", "tp": "-", "timestamp": 0}
     if active_trend.get(pair) == "SELL" and not (ema5 > ema13):
-        return {"action": "WAIT", "reason": "Wait: Trend locked (SELL active)", "entry": round(close, 5), "sl": "-", "tp": "-", "timestamp": 0}
+        return {"action": "WAIT", "reason": "Wait: Trend locked (SELL active)", "entry": close, "sl": "-", "tp": "-", "timestamp": 0}
 
     # CONDITIONS
     if ema5 > ema13 and rsi > 52 and close < upper_band:
@@ -81,23 +83,26 @@ def analyze_strategy(data, pair: str, db: Session):
         active_trend[pair] = "SELL"
         reason = "Bearish Breakout"
     else:
-        # Identify specifically why it failed
         if not (rsi > 52 or rsi < 48): reason = "Wait: RSI Neutral"
         elif not (ema5 > ema13 or ema5 < ema13): reason = "Wait: EMAs flat"
         elif close >= upper_band: reason = "Wait: Price hitting ceiling"
         elif close <= lower_band: reason = "Wait: Price hitting floor"
         else: reason = "Wait: No signal"
-        return {"action": "WAIT", "reason": reason, "entry": round(close, 5), "sl": "-", "tp": "-", "timestamp": 0}
+        return {"action": "WAIT", "reason": reason, "entry": close, "sl": "-", "tp": "-", "timestamp": 0}
 
-    # Signal Calculation
     signal_id = f"{pair}_{str(candle_time)}_{action}"
     if signal_id not in signal_timestamps: signal_timestamps[signal_id] = int(time.time())
 
+    # DYNAMIC DECIMALS: 2 for Gold, 5 for Forex
+    decimals = 2 if "XAU" in pair else 5
+
     signal = {
-        "action": action, "entry": round(close, 5),
-        "sl": round(close - (1.3*atr) if action == "BUY" else close + (1.3*atr), 5),
-        "tp": round(close + (1.5*atr) if action == "BUY" else close - (1.5*atr), 5),
-        "reason": reason, "timestamp": signal_timestamps[signal_id]
+        "action": action, 
+        "entry": round(close, decimals),
+        "sl": round(close - (1.3*atr) if action == "BUY" else close + (1.3*atr), decimals),
+        "tp": round(close + (1.5*atr) if action == "BUY" else close - (1.5*atr), decimals),
+        "reason": reason, 
+        "timestamp": signal_timestamps[signal_id]
     }
 
     # Log to DB
@@ -106,16 +111,17 @@ def analyze_strategy(data, pair: str, db: Session):
                             stop_loss=signal["sl"], take_profit=signal["tp"], reason=reason))
         db.commit()
         last_logged_signal[pair] = str(candle_time)
+        
     return signal
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
-    return templates.TemplateResponse(request=request, name="index.html")
+    return templates.TemplateResponse("index.html", {"request": request})
 
 @app.get("/journal", response_class=HTMLResponse)
 async def journal_page(request: Request, db: Session = Depends(get_db)):
     trades = db.query(TradeJournal).order_by(TradeJournal.timestamp.desc()).limit(50).all()
-    return templates.TemplateResponse(request=request, name="journal.html", context={"trades": trades})
+    return templates.TemplateResponse("journal.html", {"request": request, "trades": trades})
 
 @app.get("/api/signals")
 async def get_signals(db: Session = Depends(get_db)):
