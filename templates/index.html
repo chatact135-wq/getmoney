@@ -90,4 +90,137 @@
         }
 
         .signal-text {
-            font-size:
+            font-size: 28px;
+            font-weight: 800;
+            margin: 0;
+        }
+
+        .signal-sell { color: var(--sell-red); }
+        .signal-buy { color: var(--buy-green); }
+
+        .triggered-text {
+            color: var(--trigger-yellow);
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .data-row {
+            background-color: var(--inner-bg);
+            padding: 12px 15px;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            font-size: 14px;
+            display: flex;
+            justify-content: flex-start;
+        }
+        
+        .data-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .data-label { color: var(--text-muted); margin-right: 5px; }
+        .data-value { color: var(--text-main); font-weight: 500; }
+        .val-tp { color: var(--buy-green); font-weight: 500; }
+        .val-sl { color: var(--sell-red); font-weight: 500; }
+    </style>
+</head>
+<body>
+
+    <h1>Quant Signal System</h1>
+    
+    <div class="top-controls">
+        <button class="btn-journal">View Trading Journal</button>
+        <span class="timer-text" id="refresh-timer">Next Refresh In: 45s</span>
+    </div>
+
+    <div id="signals-container">
+        <div style="color: #8b93a6;">Connecting to signal backend...</div>
+    </div>
+
+    <script>
+        const REFRESH_INTERVAL = 45; 
+        let secondsRemaining = REFRESH_INTERVAL;
+
+        async function fetchSignals() {
+            try {
+                const response = await fetch('/api/signals');
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data && data.length > 0) {
+                        renderSignals(data);
+                    } else {
+                        document.getElementById('signals-container').innerHTML = '<div style="color: #8b93a6;">No active live signals from API.</div>';
+                    }
+                } else {
+                    document.getElementById('signals-container').innerHTML = '<div style="color: #ff4a5a;">API route error. Status: ' + response.status + '</div>';
+                }
+            } catch (error) {
+                document.getElementById('signals-container').innerHTML = '<div style="color: #ff4a5a;">Error: Connection to server lost.</div>';
+            }
+        }
+
+        function renderSignals(data) {
+            const container = document.getElementById('signals-container');
+            let html = '';
+
+            data.forEach(item => {
+                const isSell = (item.signal || '').toUpperCase() === 'SELL';
+                const signalClass = isSell ? 'signal-sell' : 'signal-buy';
+                
+                const pair = item.pair || '--';
+                const timeframe = item.timeframe || '--';
+                const signal = (item.signal || 'WAIT').toUpperCase();
+                const triggered = item.triggered || '--';
+                const entry = item.entry || '--';
+                const reason = item.reason || '--';
+                const tp = item.take_profit || '--';
+                const sl = item.stop_loss || '--';
+
+                html += `
+                    <div class="signal-card">
+                        <div class="card-header">${pair} (${timeframe})</div>
+                        <div class="signal-header-row">
+                            <h2 class="signal-text ${signalClass}">${signal}</h2>
+                            <span class="triggered-text">Triggered: ${triggered}</span>
+                        </div>
+                        
+                        <div class="data-row">
+                            <span class="data-label">Entry:</span>
+                            <span class="data-value">${entry}</span>
+                        </div>
+                        <div class="data-row">
+                            <span class="data-label">Reason:</span>
+                            <span class="data-value">${reason}</span>
+                        </div>
+                        <div class="data-row">
+                            <span class="data-label" style="color: var(--buy-green);">Take Profit:</span>
+                            <span class="val-tp">${tp}</span>
+                        </div>
+                        <div class="data-row">
+                            <span class="data-label" style="color: var(--sell-red);">Stop Loss:</span>
+                            <span class="val-sl">${sl}</span>
+                        </div>
+                    </div>
+                `;
+            });
+
+            container.innerHTML = html;
+        }
+
+        function updateTimer() {
+            secondsRemaining--;
+            if (secondsRemaining <= 0) {
+                document.getElementById('refresh-timer').innerText = "Refreshing...";
+                fetchSignals();
+                secondsRemaining = REFRESH_INTERVAL;
+            } else {
+                document.getElementById('refresh-timer').innerText = `Next Refresh In: ${secondsRemaining}s`;
+            }
+        }
+
+        // Run fetch immediately on load, then begin 1-second countdown loop
+        fetchSignals(); 
+        setInterval(updateTimer, 1000);
+    </script>
+</body>
+</html>
