@@ -14,7 +14,14 @@ app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "YOUR_API_KEY_HERE")
-PAIRS = ["EUR/USD", "GBP/USD", "XAU/USD"]
+
+# The order here determines how they appear on the dashboard.
+# Gold is now first, Euro is second.
+PAIRS = [
+    "XAU/USD",
+    "EUR/USD",
+    # "GBP/USD"  <-- Commented out for now
+]
 
 # Memory stores
 last_logged_signal = {} 
@@ -65,11 +72,14 @@ def analyze_strategy(data, pair: str, db: Session):
     close = df.iloc[-2]["close"]
     candle_time = df.iloc[-2]["datetime"]
 
-    # DIAGNOSTIC LOGIC: Check why it's waiting
+    # DYNAMIC DECIMALS: 2 for Gold, 5 for Forex
+    decimals = 2 if "XAU" in pair else 5
+
+    # DIAGNOSTIC LOGIC
     if active_trend.get(pair) == "BUY" and not (ema5 < ema13):
-        return {"action": "WAIT", "reason": "Wait: Trend locked (BUY active)", "entry": close, "sl": "-", "tp": "-", "timestamp": 0}
+        return {"action": "WAIT", "reason": "Wait: Trend locked (BUY active)", "entry": round(close, decimals), "sl": "-", "tp": "-", "timestamp": 0}
     if active_trend.get(pair) == "SELL" and not (ema5 > ema13):
-        return {"action": "WAIT", "reason": "Wait: Trend locked (SELL active)", "entry": close, "sl": "-", "tp": "-", "timestamp": 0}
+        return {"action": "WAIT", "reason": "Wait: Trend locked (SELL active)", "entry": round(close, decimals), "sl": "-", "tp": "-", "timestamp": 0}
 
     # CONDITIONS
     if ema5 > ema13 and rsi > 52 and close < upper_band:
@@ -87,14 +97,11 @@ def analyze_strategy(data, pair: str, db: Session):
         elif close >= upper_band: reason = "Wait: Price hitting ceiling"
         elif close <= lower_band: reason = "Wait: Price hitting floor"
         else: reason = "Wait: No signal"
-        return {"action": "WAIT", "reason": reason, "entry": close, "sl": "-", "tp": "-", "timestamp": 0}
+        return {"action": "WAIT", "reason": reason, "entry": round(close, decimals), "sl": "-", "tp": "-", "timestamp": 0}
 
     # Signal Calculation
     signal_id = f"{pair}_{str(candle_time)}_{action}"
     if signal_id not in signal_timestamps: signal_timestamps[signal_id] = int(time.time())
-
-    # DYNAMIC DECIMALS: 2 for Gold, 5 for Forex
-    decimals = 2 if "XAU" in pair else 5
 
     signal = {
         "action": action, 
