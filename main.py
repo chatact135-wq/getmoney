@@ -37,7 +37,6 @@ active_trend = {}
 def fetch_market_data(symbol: str):
     url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=15min&outputsize=50&apikey={TWELVEDATA_API_KEY}"
     try:
-        # TIMEOUT ADDED: Prevents the server from freezing if TwelveData is slow!
         response = requests.get(url, timeout=10).json()
         if "status" in response and response["status"] == "error":
             return {"api_error": response.get("message", "TwelveData API Error")}
@@ -55,11 +54,6 @@ def fetch_market_data(symbol: str):
 def analyze_strategy(data, pair: str, db):
     try:
         global last_logged_signal, signal_timestamps, active_trend
-
-        # 1. FIXED TIME FILTER: Pauses strictly anytime after 8:30 PM
-        current_time = datetime.utcnow() + timedelta(hours=4)
-        if (current_time.hour == 20 and current_time.minute >= 30) or current_time.hour > 20:
-            return {"action": "WAIT", "reason": "Paused: Time limit (8:30 PM)", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
 
         if isinstance(data, dict) and "api_error" in data:
             return {"action": "WAIT", "reason": data["api_error"], "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
@@ -85,7 +79,7 @@ def analyze_strategy(data, pair: str, db):
         candle_time = df.iloc[-2]["datetime"]
         decimals = 2 if "XAU" in pair else 5
 
-        # 2. RESTORED TREND LOCK
+        # TREND LOCK
         if active_trend.get(pair) == "BUY" and not (ema5 < ema13):
             return {"action": "WAIT", "reason": "Wait: Trend locked (BUY active)", "entry": float(round(close, decimals)), "sl": "-", "tp": "-", "timestamp": 0}
         if active_trend.get(pair) == "SELL" and not (ema5 > ema13):
@@ -111,7 +105,6 @@ def analyze_strategy(data, pair: str, db):
         signal_id = f"{pair}_{str(candle_time)}_{action}"
         if signal_id not in signal_timestamps: signal_timestamps[signal_id] = int(time.time())
 
-        # FORCED PYTHON FLOATS (Prevents JSON Serialization Crash)
         sl_calc = close - (1.3*atr) if action == "BUY" else close + (1.3*atr)
         tp_calc = close + (1.5*atr) if action == "BUY" else close - (1.5*atr)
 
@@ -124,7 +117,7 @@ def analyze_strategy(data, pair: str, db):
             "timestamp": int(signal_timestamps[signal_id])
         }
 
-        # 3. SAFE DATABASE LOGGING
+        # DB LOGGING
         if db and DB_AVAILABLE:
             try:
                 if last_logged_signal.get(pair) != str(candle_time):
@@ -133,7 +126,7 @@ def analyze_strategy(data, pair: str, db):
                     db.commit()
                     last_logged_signal[pair] = str(candle_time)
             except Exception:
-                pass # Fail silently so UI doesn't break
+                pass
             
         return signal
         
@@ -154,9 +147,16 @@ def journal_page(request: Request, db = Depends(get_db)):
             pass
     return templates.TemplateResponse(request=request, name="journal.html", context={"trades": trades})
 
-# REMOVED ASYNC: This prevents the entire server from freezing!
 @app.get("/api/signals")
 def get_signals():
+    # 1. INSTANT BYPASS: Cuts off all math and API requests when market is closed to stop freezing
+    current_time = datetime.utcnow() + timedelta(hours=4)
+    if (current_time.hour == 20 and current_time.minute >= 30) or current_time.hour > 20:
+        return {
+            pair: {"action": "WAIT", "reason": "Paused: Market Closed (8:30 PM)", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0} 
+            for pair in PAIRS
+        }
+
     db_session = None
     if DB_AVAILABLE:
         try:
