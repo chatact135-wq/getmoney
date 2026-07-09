@@ -1,4 +1,5 @@
 import os
+import requests
 import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
@@ -7,7 +8,6 @@ from datetime import datetime
 
 app = FastAPI(title="Quant Signal System API")
 
-# Enable CORS for production environments like Railway
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,20 +17,59 @@ app.add_middleware(
 )
 
 # ==========================================
-# 📈 YOUR QUANTITATIVE TRADING LOGIC
+# 🔑 TWELVEDATA API SETUP
+# ==========================================
+# Replace "YOUR_API_KEY_HERE" with your actual TwelveData API key!
+TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "YOUR_API_KEY_HERE")
+
+def get_live_prices():
+    """
+    Fetches real-time prices from TwelveData for XAU/USD and EUR/USD.
+    """
+    if TWELVEDATA_API_KEY == "YOUR_API_KEY_HERE":
+        return {"XAU/USD": "API KEY MISSING", "EUR/USD": "API KEY MISSING"}
+        
+    try:
+        # Fetch both symbols in a single API call to save rate limits
+        url = f"https://api.twelvedata.com/quote?symbol=XAU/USD,EUR/USD&apikey={TWELVEDATA_API_KEY}"
+        response = requests.get(url)
+        data = response.json()
+        
+        # Extract the live close prices
+        xau_price = data.get("XAU/USD", {}).get("close", "Error")
+        eur_price = data.get("EUR/USD", {}).get("close", "Error")
+        
+        # Format the numbers nicely (2 decimals for Gold, 5 for EUR)
+        if xau_price != "Error":
+            xau_price = f"{float(xau_price):.2f}"
+        if eur_price != "Error":
+            eur_price = f"{float(eur_price):.5f}"
+            
+        return {"XAU/USD": xau_price, "EUR/USD": eur_price}
+        
+    except Exception as e:
+        print(f"TwelveData connection error: {e}")
+        return {"XAU/USD": "Error", "EUR/USD": "Error"}
+
+# ==========================================
+# 📈 QUANTITATIVE TRADING LOGIC
 # ==========================================
 def calculate_live_signals():
     """
-    Generates the current market signals.
+    Generates the current market signals using live TwelveData prices.
     """
     current_time = datetime.now().strftime("%H:%M:%S")
+    
+    # 1. Fetch the real prices
+    live_prices = get_live_prices()
 
+    # 2. Inject them into your dashboard data
     xau_data = {
         "pair": "XAU/USD",
         "timeframe": "15M",
-        "signal": "BUY",
+        "signal": "BUY", 
         "triggered": f"Updated at {current_time}",
-        "entry": "2350.25",
+        "entry": live_prices["XAU/USD"],  # <--- REAL DATA HERE
         "reason": "M15 Support Breakout + Volume Spike",
         "take_profit": "2365.00",
         "stop_loss": "2340.00"
@@ -41,7 +80,7 @@ def calculate_live_signals():
         "timeframe": "5M",
         "signal": "SELL",
         "triggered": f"Updated at {current_time}",
-        "entry": "1.08520",
+        "entry": live_prices["EUR/USD"],  # <--- REAL DATA HERE
         "reason": "M5 Bearish Engulfing at Resistance",
         "take_profit": "1.08100",
         "stop_loss": "1.08750"
@@ -54,10 +93,6 @@ def calculate_live_signals():
 # ==========================================
 @app.get("/", response_class=HTMLResponse)
 def read_root():
-    """
-    Serves the dashboard. 
-    Looking specifically inside the 'templates' folder (with an 's').
-    """
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
     html_path = os.path.join(BASE_DIR, "templates", "index.html")
     
@@ -72,9 +107,6 @@ def read_root():
 
 @app.get("/api/signals")
 def get_signals():
-    """
-    Endpoint that the frontend checks every 45 seconds.
-    """
     live_data = calculate_live_signals()
     return live_data
 
