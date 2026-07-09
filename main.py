@@ -42,7 +42,6 @@ def analyze_strategy(data, pair: str, db: Session):
 
     decimals = 2 if "XAU" in pair else 5
 
-    # Check if data is valid
     if data is None or len(data) < 25:
         return {"action": "WAIT", "reason": "Wait: Gathering data", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
 
@@ -50,8 +49,7 @@ def analyze_strategy(data, pair: str, db: Session):
     close = float(df.iloc[-2]["close"])
     candle_time = df.iloc[-2]["datetime"]
 
-    # 1. SIMPLE TIME FILTER
-    # Gets the current time in UAE (+4 hours). If it's past 8:30 PM, it shows the live price but forces WAIT.
+    # SIMPLE TIME FILTER (8:30 PM UAE)
     current_time = datetime.utcnow() + timedelta(hours=4)
     if (current_time.hour == 20 and current_time.minute >= 30) or current_time.hour > 20:
         return {"action": "WAIT", "reason": "Paused: Time limit (8:30 PM)", "entry": round(close, decimals), "sl": "-", "tp": "-", "timestamp": 0}
@@ -89,7 +87,6 @@ def analyze_strategy(data, pair: str, db: Session):
     if signal_id not in signal_timestamps: 
         signal_timestamps[signal_id] = int(time.time())
 
-    # Build final signal output
     if action == "WAIT":
         signal = {
             "action": "WAIT", 
@@ -124,9 +121,10 @@ def analyze_strategy(data, pair: str, db: Session):
             
     return signal
 
+# FIXED: Fast API 0.112.0+ TemplateResponse Formatting
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="index.html")
 
 @app.get("/journal", response_class=HTMLResponse)
 async def journal_page(request: Request, db: Session = Depends(get_db)):
@@ -134,7 +132,7 @@ async def journal_page(request: Request, db: Session = Depends(get_db)):
         trades = db.query(TradeJournal).order_by(TradeJournal.timestamp.desc()).limit(50).all()
     except:
         trades = []
-    return templates.TemplateResponse("journal.html", {"request": request, "trades": trades})
+    return templates.TemplateResponse(request=request, name="journal.html", context={"trades": trades})
 
 @app.get("/api/signals")
 async def get_signals(db: Session = Depends(get_db)):
