@@ -1,3 +1,4 @@
+import os
 import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
@@ -6,7 +7,7 @@ from datetime import datetime
 
 app = FastAPI(title="Quant Signal System API")
 
-# Enable CORS (Good practice for production APIs)
+# Enable CORS for production
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,26 +16,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ==========================================
-# 🧠 YOUR QUANTITATIVE TRADING LOGIC
-# ==========================================
 def calculate_live_signals():
     """
-    THIS is where your actual trading bot logic goes!
-    You would connect to your broker/exchange (e.g., Binance, OANDA, MetaTrader, CCXT),
-    download the 5M and 15M candles, and run your algorithms.
+    Generates the current market signals.
     """
-    
-    # Example of dynamically fetching the current time for the "triggered" field
     current_time = datetime.now().strftime("%H:%M:%S")
 
-    # Replace these hardcoded dictionaries with your actual live calculations
     xau_data = {
         "pair": "XAU/USD",
         "timeframe": "15M",
-        "signal": "BUY",  # e.g., if rsi < 30: return "BUY"
+        "signal": "BUY",
         "triggered": f"Updated at {current_time}",
-        "entry": "2350.25", # e.g., current_close_price
+        "entry": "2350.25",
         "reason": "M15 Support Breakout + Volume Spike",
         "take_profit": "2365.00",
         "stop_loss": "2340.00"
@@ -53,31 +46,31 @@ def calculate_live_signals():
 
     return [xau_data, eur_data]
 
-# ==========================================
-# 🌐 WEB SERVER ROUTES
-# ==========================================
 @app.get("/", response_class=HTMLResponse)
 def read_root():
-    """Serves the frontend dashboard."""
+    """
+    Serves the dashboard using an absolute path to prevent 'File Not Found' errors on Railway.
+    """
+    # Bulletproof path resolution
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+    html_path = os.path.join(BASE_DIR, "index.html")
+    
     try:
-        with open("index.html", "r") as file:
+        with open(html_path, "r", encoding="utf-8") as file:
             return HTMLResponse(content=file.read(), status_code=200)
     except FileNotFoundError:
         return HTMLResponse(
-            content="<h1>Error: index.html not found.</h1>", 
+            content=f"<h1>Error: index.html not found exactly at {html_path}</h1>", 
             status_code=404
         )
 
 @app.get("/api/signals")
 def get_signals():
-    """API Endpoint that the HTML dashboard calls every 45 seconds."""
-    # Calls your live trading logic and returns it as JSON
+    """
+    Endpoint that the frontend checks every 45 seconds.
+    """
     live_data = calculate_live_signals()
     return live_data
 
-# ==========================================
-# 🚀 SERVER EXECUTION
-# ==========================================
 if __name__ == "__main__":
-    # This allows you to run the file directly via `python main.py` for local testing
     uvicorn.run("main:app", host="0.0.0.0", port=8080, reload=True)
