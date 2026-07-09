@@ -46,7 +46,7 @@ def analyze_strategy(data, pair: str, db: Session):
     try:
         global last_logged_signal, signal_timestamps, active_trend
 
-        # 1. TIME FILTER: Pauses after 8:30 PM UAE
+        # 1. FIXED TIME FILTER: Pauses strictly anytime after 8:30 PM UAE
         current_time = datetime.utcnow() + timedelta(hours=4)
         if (current_time.hour == 20 and current_time.minute >= 30) or current_time.hour > 20:
             return {"action": "WAIT", "reason": "Paused: Time limit (8:30 PM)", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
@@ -75,7 +75,13 @@ def analyze_strategy(data, pair: str, db: Session):
         candle_time = df.iloc[-2]["datetime"]
         decimals = 2 if "XAU" in pair else 5
 
-        # CONDITIONS (Trend lock disabled)
+        # 2. RESTORED TREND LOCK: Forces WAIT after a signal is caught
+        if active_trend.get(pair) == "BUY" and not (ema5 < ema13):
+            return {"action": "WAIT", "reason": "Wait: Trend locked (BUY active)", "entry": round(close, decimals), "sl": "-", "tp": "-", "timestamp": 0}
+        if active_trend.get(pair) == "SELL" and not (ema5 > ema13):
+            return {"action": "WAIT", "reason": "Wait: Trend locked (SELL active)", "entry": round(close, decimals), "sl": "-", "tp": "-", "timestamp": 0}
+
+        # CONDITIONS
         if ema5 > ema13 and rsi > 52 and close < upper_band:
             action = "BUY"
             active_trend[pair] = "BUY"
@@ -104,21 +110,19 @@ def analyze_strategy(data, pair: str, db: Session):
             "timestamp": signal_timestamps[signal_id]
         }
 
-        # Safe Database Execution
+        # 3. SAFE DATABASE EXECUTION: Prevents silent crashes
         try:
             if last_logged_signal.get(pair) != str(candle_time):
                 db.add(TradeJournal(pair=pair, action=action, entry_price=signal["entry"], 
                                     stop_loss=signal["sl"], take_profit=signal["tp"], reason=reason))
                 db.commit()
                 last_logged_signal[pair] = str(candle_time)
-        except Exception as db_err:
-            db.rollback()
-            print(f"DB Warning: {db_err}") # Fails safely without breaking the UI
+        except Exception:
+            db.rollback() 
             
         return signal
         
     except Exception as e:
-        # Pushes the exact Python crash code to the dashboard card
         return {"action": "WAIT", "reason": f"CRASH: {str(e)}", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
 
 @app.get("/", response_class=HTMLResponse)
