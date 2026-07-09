@@ -4,7 +4,7 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
-from datetime import datetime
+from datetime import datetime, timedelta
 
 app = FastAPI(title="Quant Signal System API")
 
@@ -30,16 +30,13 @@ def get_live_prices():
         return {"XAU/USD": "API KEY MISSING", "EUR/USD": "API KEY MISSING"}
         
     try:
-        # Fetch both symbols in a single API call to save rate limits
         url = f"https://api.twelvedata.com/quote?symbol=XAU/USD,EUR/USD&apikey={TWELVEDATA_API_KEY}"
         response = requests.get(url)
         data = response.json()
         
-        # Extract the live close prices
         xau_price = data.get("XAU/USD", {}).get("close", "Error")
         eur_price = data.get("EUR/USD", {}).get("close", "Error")
         
-        # Format the numbers nicely (2 decimals for Gold, 5 for EUR)
         if xau_price != "Error":
             xau_price = f"{float(xau_price):.2f}"
         if eur_price != "Error":
@@ -56,20 +53,23 @@ def get_live_prices():
 # ==========================================
 def calculate_live_signals():
     """
-    Generates the current market signals using live TwelveData prices.
+    Generates the current market signals using live TwelveData prices and UAE timezone.
     """
-    current_time = datetime.now().strftime("%H:%M:%S")
+    # Grab the UTC server time and force it forward 4 hours for UAE local time
+    uae_time = datetime.utcnow() + timedelta(hours=4)
     
-    # 1. Fetch the real prices
+    # Format it to look like "05:05:17 PM"
+    current_time = uae_time.strftime("%I:%M:%S %p")
+    
+    # Fetch the real prices
     live_prices = get_live_prices()
 
-    # 2. Inject them into your dashboard data
     xau_data = {
         "pair": "XAU/USD",
         "timeframe": "15M",
         "signal": "BUY", 
         "triggered": f"Updated at {current_time}",
-        "entry": live_prices["XAU/USD"],  # <--- REAL DATA HERE
+        "entry": live_prices["XAU/USD"],  
         "reason": "M15 Support Breakout + Volume Spike",
         "take_profit": "2365.00",
         "stop_loss": "2340.00"
@@ -80,7 +80,7 @@ def calculate_live_signals():
         "timeframe": "5M",
         "signal": "SELL",
         "triggered": f"Updated at {current_time}",
-        "entry": live_prices["EUR/USD"],  # <--- REAL DATA HERE
+        "entry": live_prices["EUR/USD"],  
         "reason": "M5 Bearish Engulfing at Resistance",
         "take_profit": "1.08100",
         "stop_loss": "1.08750"
