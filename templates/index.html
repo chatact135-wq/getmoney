@@ -1,103 +1,3 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0"> 
-    <title>Quant Signal System</title>
-    <style>
-        :root {
-            --bg: #0f172a;
-            --card-bg: #1e293b;
-            --text-main: #f8fafc;
-            --text-muted: #94a3b8;
-            --green: #10b981;
-            --red: #ef4444;
-            --yellow: #fbbf24;
-        }
-        body {
-            background-color: var(--bg);
-            color: var(--text-main);
-            font-family: system-ui, -apple-system, sans-serif;
-            margin: 0;
-            padding: 15px;
-        }
-        /* Header Setup */
-        .header-container {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 25px;
-            padding-bottom: 15px;
-            border-bottom: 1px solid #334155;
-            flex-wrap: wrap; 
-            gap: 15px;
-        }
-        .header-container h1 { margin: 0; font-size: 1.5rem; }
-        .header-controls { display: flex; align-items: center; gap: 15px; flex-wrap: wrap; }
-        .btn {
-            background-color: #334155;
-            color: white;
-            text-decoration: none;
-            padding: 8px 16px;
-            border-radius: 6px;
-            font-size: 0.9rem;
-            transition: background 0.2s;
-        }
-        .btn:hover { background-color: #475569; }
-        .timer { color: #2dd4bf; font-weight: bold; }
-        
-        /* Grid Setup */
-        .grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 20px;
-        }
-        .card {
-            background-color: var(--card-bg);
-            border-radius: 10px;
-            padding: 20px;
-            border: 1px solid #334155;
-        }
-        .card h2 { margin-top: 0; font-size: 1.2rem; color: var(--text-muted); }
-        
-        /* Signal Header with Timer */
-        .signal-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 15px;
-        }
-        .signal-action { font-size: 2rem; font-weight: bold; }
-        .time-ago { font-size: 0.9rem; color: var(--yellow); font-weight: bold; }
-        
-        .WAIT { color: var(--text-muted); }
-        .BUY { color: var(--green); }
-        .SELL { color: var(--red); }
-        
-        .data-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-        .data-box { background: #0f172a; padding: 12px; border-radius: 6px; font-size: 0.9rem; }
-        .tp { color: var(--green); }
-        .sl { color: var(--red); }
-
-        /* Mobile Responsive */
-        @media (max-width: 600px) {
-            .header-container { flex-direction: column; align-items: flex-start; }
-            .data-grid { grid-template-columns: 1fr; }
-            .card h2 { font-size: 1.1rem; }
-        }
-    </style>
-</head>
-<body>
-    <div class="header-container">
-        <h1>QUANT SIGNAL SYSTEM</h1>
-        <div class="header-controls">
-            <a href="/journal" class="btn">View Trading Journal</a>
-            <div class="timer" id="timerDisplay">Next Refresh In: 45s</div>
-        </div>
-    </div>
-
-    <div class="grid" id="signals-container"></div>
-
     <script>
         let countdown = 45;
 
@@ -141,14 +41,14 @@
             }
         }
 
-        // Main API Refresh Timer
+        // Main API Refresh Timer (Restored Hard Reload)
         setInterval(() => {
             countdown--;
             if (countdown <= 0) {
-                countdown = 45;
-                fetchSignals();
+                location.reload(); // This guarantees a completely fresh server pull
+            } else {
+                document.getElementById('timerDisplay').innerText = `Next Refresh In: ${countdown}s`;
             }
-            document.getElementById('timerDisplay').innerText = `Next Refresh In: ${countdown}s`;
         }, 1000);
 
         // Live 'Time Ago' Counter (Updates independently every second)
@@ -172,5 +72,3 @@
         // Initial fetch on load
         fetchSignals();
     </script>
-</body>
-</html>
