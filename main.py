@@ -56,11 +56,10 @@ def calculate_live_signals():
 def read_root():
     """
     Serves the dashboard. 
-    Notice we added "template" to the file path below!
+    Looking specifically inside the 'templates' folder (with an 's').
     """
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-    # Tells Python to look inside the 'template' folder for index.html
-    html_path = os.path.join(BASE_DIR, "template", "index.html")
+    html_path = os.path.join(BASE_DIR, "templates", "index.html")
     
     try:
         with open(html_path, "r", encoding="utf-8") as file:
