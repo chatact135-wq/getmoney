@@ -1,74 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Surveillance Dashboard</title>
+    <style>
+        body { 
+            background-color: #121212; 
+            color: #ffffff; 
+            font-family: system-ui, -apple-system, sans-serif; 
+            margin: 0; 
+            padding: 20px; 
+        }
+        .header { 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            border-bottom: 1px solid #333; 
+            padding-bottom: 10px; 
+            margin-bottom: 20px; 
+        }
+        .grid-container { 
+            display: grid; 
+            /* Automatically scales the grid items */
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); 
+            gap: 20px; 
+        }
+        .video-card { 
+            background: #1e1e1e; 
+            padding: 15px; 
+            border-radius: 8px; 
+            cursor: pointer; 
+            border: 1px solid #333; 
+            transition: border-color 0.2s ease-in-out; 
+        }
+        .video-card:hover { border-color: #007bff; }
+        
+        .video-thumbnail { 
+            width: 100%; 
+            height: 200px; 
+            background: #000; 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            border-radius: 4px; 
+            margin-bottom: 10px;
+            overflow: hidden;
+        }
+        
+        .status-indicator { 
+            display: inline-block; 
+            width: 10px; 
+            height: 10px; 
+            border-radius: 50%; 
+            background: #00ff00; 
+            margin-right: 8px; 
+        }
+
+        /* Modal specific styles */
+        .modal { 
+            display: none; 
+            position: fixed; 
+            z-index: 100; 
+            left: 0; 
+            top: 0; 
+            width: 100%; 
+            height: 100%; 
+            background-color: rgba(0,0,0,0.85); 
+            backdrop-filter: blur(4px);
+        }
+        .modal-content { 
+            background-color: #1e1e1e;
+            margin: 5% auto; 
+            padding: 20px;
+            width: 80%; 
+            max-width: 900px; 
+            border-radius: 8px;
+            border: 1px solid #333;
+        }
+        .close { 
+            color: #aaa; 
+            float: right; 
+            font-size: 28px; 
+            font-weight: bold; 
+            cursor: pointer; 
+        }
+        .close:hover { color: white; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h2>Live Feeds</h2>
+        <div id="connection-status">
+            <span class="status-indicator" id="main-status-dot"></span> 
+            <span id="main-status-text">System Online</span>
+        </div>
+    </div>
+
+    <div class="grid-container" id="video-grid">
+        <!-- Card 1 -->
+        <div class="video-card" onclick="openModal('Camera 01')">
+            <div class="video-thumbnail">
+                <span style="color: #666;">[ Thumbnail ]</span>
+            </div>
+            <div>
+                <strong>Camera 01</strong><br>
+                <small style="color: #aaa;">Status: <span id="cam1-signal">Awaiting data...</span></small>
+            </div>
+        </div>
+
+        <!-- Card 2 -->
+        <div class="video-card" onclick="openModal('Camera 02')">
+            <div class="video-thumbnail">
+                <span style="color: #666;">[ Thumbnail ]</span>
+            </div>
+            <div>
+                <strong>Camera 02</strong><br>
+                <small style="color: #aaa;">Status: <span id="cam2-signal">Awaiting data...</span></small>
+            </div>
+        </div>
+    </div>
+
+    <!-- Playback Modal -->
+    <div id="videoModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal()">&times;</span>
+            <h3 id="modalTitle" style="margin-top: 0;">Camera Feed</h3>
+            <div style="width:100%; height:500px; background:#000; display:flex; justify-content:center; align-items:center; border-radius: 4px;">
+                <span style="color: #666;">[ Video Player Mount Point ]</span>
+            </div>
+        </div>
+    </div>
+
     <script>
-        let countdown = 45;
+        // 1. Modal Logic
+        function openModal(camName) {
+            document.getElementById('modalTitle').innerText = camName;
+            document.getElementById('videoModal').style.display = 'block';
+        }
 
-        async function fetchSignals() {
-            try {
-                const response = await fetch('/api/signals');
-                const data = await response.json();
-                
-                const container = document.getElementById('signals-container');
-                container.innerHTML = '';
+        function closeModal() {
+            document.getElementById('videoModal').style.display = 'none';
+        }
 
-                for (const [pair, signal] of Object.entries(data)) {
-                    const card = document.createElement('div');
-                    card.className = 'card';
-                    
-                    let actionClass = signal.action === 'BUY' ? 'BUY' : signal.action === 'SELL' ? 'SELL' : 'WAIT';
-                    
-                    // Create the live timestamp badge only if it's a BUY or SELL
-                    let timeBadge = '';
-                    if (signal.action !== 'WAIT' && signal.timestamp) {
-                        timeBadge = `<div class="time-ago" data-timestamp="${signal.timestamp}">Triggered: Just now</div>`;
-                    }
-
-                    card.innerHTML = `
-                        <h2>${pair} (15M)</h2>
-                        <div class="signal-header">
-                            <div class="signal-action ${actionClass}">${signal.action}</div>
-                            ${timeBadge}
-                        </div>
-                        <div class="data-grid">
-                            <div class="data-box">Entry: ${signal.entry}</div>
-                            <div class="data-box">Reason: ${signal.reason}</div>
-                            <div class="data-box tp">Take Profit: ${signal.tp}</div>
-                            <div class="data-box sl">Stop Loss: ${signal.sl}</div>
-                        </div>
-                    `;
-                    container.appendChild(card);
-                }
-            } catch (e) {
-                console.error("Failed to fetch signals", e);
+        // Close modal if user clicks outside of the box
+        window.onclick = function(event) {
+            const modal = document.getElementById('videoModal');
+            if (event.target === modal) {
+                closeModal();
             }
         }
 
-        // Main API Refresh Timer (Restored Hard Reload)
-        setInterval(() => {
-            countdown--;
-            if (countdown <= 0) {
-                location.reload(); // This guarantees a completely fresh server pull
-            } else {
-                document.getElementById('timerDisplay').innerText = `Next Refresh In: ${countdown}s`;
-            }
-        }, 1000);
-
-        // Live 'Time Ago' Counter (Updates independently every second)
-        setInterval(() => {
-            const now = Math.floor(Date.now() / 1000);
-            document.querySelectorAll('.time-ago').forEach(el => {
-                const ts = parseInt(el.getAttribute('data-timestamp'));
-                if (!ts) return;
+        // 2. Safe Auto-Refresh Logic (Polling)
+        async function fetchSignals() {
+            try {
+                // Silently request data from your FastAPI backend
+                const response = await fetch('/api/signals');
                 
-                const diff = now - ts;
-                if (diff < 60) {
-                    el.innerText = `Triggered: ${diff}s ago`;
-                } else {
-                    const mins = Math.floor(diff / 60);
-                    const secs = diff % 60;
-                    el.innerText = `Triggered: ${mins}m ${secs}s ago`;
-                }
-            });
-        }, 1000);
+                if (response.ok) {
+                    const data = await response.json();
+                    
+                    // Update connection UI to show healthy status
+                    document.getElementById('main-status-dot').style.background = '#00ff00';
+                    document.getElementById('main-status-text').innerText = 'System Online';
 
-        // Initial fetch on load
+                    // Log it to the console so you can see it working without a page reload
+                    console.log("Signals refreshed at", new Date().toLocaleTimeString(), data);
+                    
+                    // Example of how you would update the text in the cards:
+                    // document.getElementById('cam1-signal').innerText = data.cam1_status || "Active";
+                    
+                } else {
+                    throw new Error("Server returned " + response.status);
+                }
+            } catch (error) {
+                console.error("Connection lost:", error);
+                // Visually show that the connection to the backend dropped
+                document.getElementById('main-status-dot').style.background = '#ff0000';
+                document.getElementById('main-status-text').innerText = 'Connection Lost';
+            }
+        }
+
+        // Run immediately on page load
         fetchSignals();
+        
+        // Then auto-refresh the data every 3 seconds (3000 milliseconds)
+        // This replaces the dangerous HTML <meta> refresh!
+        setInterval(fetchSignals, 3000);
     </script>
+</body>
+</html>
