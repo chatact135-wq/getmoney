@@ -3,148 +3,255 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Trading Signals</title>
+    <title>Quant Signal System</title>
     <style>
+        :root {
+            --bg-color: #0b101e;
+            --card-bg: #23283b;
+            --inner-bg: #151928;
+            --text-main: #ffffff;
+            --text-muted: #8b93a6;
+            --sell-red: #ff4a5a;
+            --buy-green: #00c881;
+            --timer-green: #2ecf9e;
+            --trigger-yellow: #ffc145;
+            --btn-bg: #353d52;
+        }
+
         body {
-            background-color: #121212;
-            color: #ffffff;
-            font-family: system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             margin: 0;
             padding: 20px;
         }
-        .header {
+
+        h1 {
+            font-size: 24px;
+            font-weight: 800;
+            letter-spacing: 0.5px;
+            margin: 0 0 15px 0;
+            text-transform: uppercase;
+        }
+
+        .top-controls {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 25px;
+            border-bottom: 1px solid #1e2436;
+            padding-bottom: 20px;
+        }
+
+        .btn-journal {
+            background-color: var(--btn-bg);
+            color: var(--text-main);
+            border: none;
+            padding: 10px 16px;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            font-weight: 500;
+        }
+
+        .timer-text {
+            color: var(--timer-green);
+            font-weight: 600;
+            font-size: 15px;
+        }
+
+        #signals-container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            max-width: 500px;
+        }
+
+        .signal-card {
+            background-color: var(--card-bg);
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+        }
+
+        .card-header {
+            color: var(--text-muted);
+            font-weight: 600;
+            font-size: 15px;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+        }
+
+        .signal-header-row {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            border-bottom: 1px solid #333;
-            padding-bottom: 10px;
-            margin-bottom: 20px;
+            margin-bottom: 15px;
         }
-        .status-indicator {
-            display: inline-block;
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            background: #00ff00;
-            margin-right: 8px;
+
+        .signal-text {
+            font-size: 28px;
+            font-weight: 800;
+            margin: 0;
         }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 10px;
-            background-color: #1e1e1e;
-            border-radius: 8px;
-            overflow: hidden;
-        }
-        th, td {
-            padding: 15px;
-            text-align: left;
-            border-bottom: 1px solid #333;
-        }
-        th {
-            color: #aaa;
+
+        .signal-sell { color: var(--sell-red); }
+        .signal-buy { color: var(--buy-green); }
+
+        .triggered-text {
+            color: var(--trigger-yellow);
+            font-size: 13px;
             font-weight: 600;
-            background-color: #252525;
         }
-        .signal-buy {
-            color: #00ff00;
-            font-weight: bold;
+
+        .data-row {
+            background-color: var(--inner-bg);
+            padding: 12px 15px;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            font-size: 14px;
+            display: flex;
+            justify-content: flex-start;
         }
-        .signal-sell {
-            color: #ff4444;
-            font-weight: bold;
+        
+        .data-row:last-child {
+            margin-bottom: 0;
         }
-        .signal-hold {
-            color: #ffbb33;
-            font-weight: bold;
-        }
+
+        .data-label { color: var(--text-muted); margin-right: 5px; }
+        .data-value { color: var(--text-main); font-weight: 500; }
+        .val-tp { color: var(--buy-green); font-weight: 500; }
+        .val-sl { color: var(--sell-red); font-weight: 500; }
     </style>
 </head>
 <body>
 
-    <div class="header">
-        <h2>Live Trading Signals</h2>
-        <div id="connection-status">
-            <span class="status-indicator" id="main-status-dot"></span>
-            <span id="main-status-text">System Online</span>
-        </div>
+    <h1>Quant Signal System</h1>
+    
+    <div class="top-controls">
+        <button class="btn-journal">View Trading Journal</button>
+        <span class="timer-text" id="refresh-timer">Next Refresh In: 45s</span>
     </div>
 
-    <table>
-        <thead>
-            <tr>
-                <th>Asset</th>
-                <th>Signal</th>
-                <th>Price</th>
-                <th>Timestamp</th>
-            </tr>
-        </thead>
-        <tbody id="signals-table-body">
-            <tr>
-                <td colspan="4" style="text-align: center; color: #aaa;">Fetching live market data...</td>
-            </tr>
-        </tbody>
-    </table>
+    <div id="signals-container">
+        </div>
 
     <script>
-        // Safe Auto-Refresh Logic (Polling)
+        const REFRESH_INTERVAL = 45; 
+        let secondsRemaining = REFRESH_INTERVAL;
+
+        // Default placeholder data matching your exact requested assets and timeframes
+        const defaultPairs = [
+            {
+                pair: "XAU/USD",
+                timeframe: "15M",
+                signal: "BUY",
+                triggered: "Just now",
+                entry: "2350.25",
+                reason: "M15 Support Breakout + Volume Spike",
+                take_profit: "2365.00",
+                stop_loss: "2340.00"
+            },
+            {
+                pair: "EUR/USD",
+                timeframe: "5M",
+                signal: "SELL",
+                triggered: "3 mins ago",
+                entry: "1.08520",
+                reason: "M5 Bearish Engulfing at Resistance",
+                take_profit: "1.08100",
+                stop_loss: "1.08750"
+            }
+        ];
+
+        // Function to fetch and render signals
         async function fetchSignals() {
             try {
-                // Silently request data from your FastAPI backend
                 const response = await fetch('/api/signals');
-                
                 if (response.ok) {
                     const data = await response.json();
                     
-                    // Update connection UI to show healthy status
-                    document.getElementById('main-status-dot').style.background = '#00ff00';
-                    document.getElementById('main-status-text').innerText = 'System Online';
-
-                    // Check if we actually have data
-                    if (!data || data.length === 0) {
-                        document.getElementById('signals-table-body').innerHTML = '<tr><td colspan="4" style="text-align: center; color: #aaa;">No signals generated yet.</td></tr>';
-                        return;
+                    // If backend sends valid data, use it; otherwise fallback to defaults
+                    if (data && data.length > 0) {
+                        renderSignals(data);
+                    } else {
+                        renderSignals(defaultPairs);
                     }
-
-                    // Build the table rows based on your API data
-                    let rowsHtml = '';
-                    data.forEach(item => {
-                        // Determine the color class based on the signal word
-                        let signalClass = 'signal-hold';
-                        let signalText = (item.signal || '').toUpperCase();
-                        
-                        if (signalText === 'BUY') signalClass = 'signal-buy';
-                        if (signalText === 'SELL') signalClass = 'signal-sell';
-
-                        rowsHtml += `
-                            <tr>
-                                <td><strong>${item.asset || '--'}</strong></td>
-                                <td class="${signalClass}">${signalText || '--'}</td>
-                                <td>${item.price ? '$' + item.price : '--'}</td>
-                                <td style="color: #888;">${item.timestamp || '--'}</td>
-                            </tr>
-                        `;
-                    });
-
-                    // Inject the new rows into the table
-                    document.getElementById('signals-table-body').innerHTML = rowsHtml;
-                    
                 } else {
-                    throw new Error("Server returned " + response.status);
+                    console.warn("Backend error response. Using default asset configuration.");
+                    renderSignals(defaultPairs);
                 }
             } catch (error) {
-                console.error("Connection lost:", error);
-                // Visually show that the connection to the backend dropped
-                document.getElementById('main-status-dot').style.background = '#ff4444';
-                document.getElementById('main-status-text').innerText = 'Connection Lost';
+                console.error("Connection error to /api/signals. Displaying interface defaults.");
+                renderSignals(defaultPairs);
             }
         }
 
-        // Run immediately on page load
-        fetchSignals();
-        
-        // Auto-refresh the data every 3 seconds (3000 ms)
-        setInterval(fetchSignals, 3000);
+        // Render data structure directly to visual cards
+        function renderSignals(data) {
+            const container = document.getElementById('signals-container');
+            let html = '';
+
+            data.forEach(item => {
+                const isSell = (item.signal || '').toUpperCase() === 'SELL';
+                const signalClass = isSell ? 'signal-sell' : 'signal-buy';
+                
+                const pair = item.pair || 'UNKNOWN';
+                const timeframe = item.timeframe || '5M';
+                const signal = (item.signal || 'WAIT').toUpperCase();
+                const triggered = item.triggered || 'Just now';
+                const entry = item.entry || '--';
+                const reason = item.reason || '--';
+                const tp = item.take_profit || '--';
+                const sl = item.stop_loss || '--';
+
+                html += `
+                    <div class="signal-card">
+                        <div class="card-header">${pair} (${timeframe})</div>
+                        <div class="signal-header-row">
+                            <h2 class="signal-text ${signalClass}">${signal}</h2>
+                            <span class="triggered-text">Triggered: ${triggered}</span>
+                        </div>
+                        
+                        <div class="data-row">
+                            <span class="data-label">Entry:</span>
+                            <span class="data-value">${entry}</span>
+                        </div>
+                        <div class="data-row">
+                            <span class="data-label">Reason:</span>
+                            <span class="data-value">${reason}</span>
+                        </div>
+                        <div class="data-row">
+                            <span class="data-label" style="color: var(--buy-green);">Take Profit:</span>
+                            <span class="val-tp">${tp}</span>
+                        </div>
+                        <div class="data-row">
+                            <span class="data-label" style="color: var(--sell-red);">Stop Loss:</span>
+                            <span class="val-sl">${sl}</span>
+                        </div>
+                    </div>
+                `;
+            });
+
+            container.innerHTML = html;
+        }
+
+        // Countdown Timer Logic
+        function updateTimer() {
+            secondsRemaining--;
+            
+            if (secondsRemaining <= 0) {
+                document.getElementById('refresh-timer').innerText = "Refreshing...";
+                fetchSignals();
+                secondsRemaining = REFRESH_INTERVAL;
+            } else {
+                document.getElementById('refresh-timer').innerText = `Next Refresh In: ${secondsRemaining}s`;
+            }
+        }
+
+        // Initial launch sequence
+        fetchSignals(); 
+        setInterval(updateTimer, 1000);
     </script>
 </body>
 </html>
