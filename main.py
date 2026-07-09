@@ -7,7 +7,7 @@ from datetime import datetime
 
 app = FastAPI(title="Quant Signal System API")
 
-# Enable CORS for production
+# Enable CORS for production environments like Railway
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -16,6 +16,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ==========================================
+# 📈 YOUR QUANTITATIVE TRADING LOGIC
+# ==========================================
 def calculate_live_signals():
     """
     Generates the current market signals.
@@ -46,14 +49,18 @@ def calculate_live_signals():
 
     return [xau_data, eur_data]
 
+# ==========================================
+# 🌐 WEB SERVER ROUTES
+# ==========================================
 @app.get("/", response_class=HTMLResponse)
 def read_root():
     """
-    Serves the dashboard using an absolute path to prevent 'File Not Found' errors on Railway.
+    Serves the dashboard. 
+    Notice we added "template" to the file path below!
     """
-    # Bulletproof path resolution
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-    html_path = os.path.join(BASE_DIR, "index.html")
+    # Tells Python to look inside the 'template' folder for index.html
+    html_path = os.path.join(BASE_DIR, "template", "index.html")
     
     try:
         with open(html_path, "r", encoding="utf-8") as file:
