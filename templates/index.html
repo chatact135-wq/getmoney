@@ -2,225 +2,121 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"> 
     <title>Quant Signal System</title>
     <style>
         :root {
-            --bg-color: #0b101e;
-            --card-bg: #23283b;
-            --inner-bg: #151928;
-            --text-main: #ffffff;
-            --text-muted: #8b93a6;
-            --sell-red: #ff4a5a;
-            --buy-green: #00c881;
-            --timer-green: #2ecf9e;
-            --trigger-yellow: #ffc145;
-            --btn-bg: #353d52;
+            --bg: #0f172a;
+            --card-bg: #1e293b;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --green: #10b981;
+            --red: #ef4444;
+            --yellow: #fbbf24;
         }
-
         body {
-            background-color: var(--bg-color);
+            background-color: var(--bg);
             color: var(--text-main);
-            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            font-family: system-ui, -apple-system, sans-serif;
             margin: 0;
-            padding: 20px;
+            padding: 15px;
         }
-
-        h1 {
-            font-size: 24px;
-            font-weight: 800;
-            letter-spacing: 0.5px;
-            margin: 0 0 15px 0;
-            text-transform: uppercase;
-        }
-
-        .top-controls {
+        /* Header Setup */
+        .header-container {
             display: flex;
+            justify-content: space-between;
             align-items: center;
-            gap: 15px;
             margin-bottom: 25px;
-            border-bottom: 1px solid #1e2436;
-            padding-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #334155;
+            flex-wrap: wrap; 
+            gap: 15px;
         }
-
-        .btn-journal {
-            background-color: var(--btn-bg);
-            color: var(--text-main);
-            border: none;
-            padding: 10px 16px;
+        .header-container h1 { margin: 0; font-size: 1.5rem; }
+        .header-controls { display: flex; align-items: center; gap: 15px; flex-wrap: wrap; }
+        .btn {
+            background-color: #334155;
+            color: white;
+            text-decoration: none;
+            padding: 8px 16px;
             border-radius: 6px;
-            font-size: 14px;
-            cursor: pointer;
-            font-weight: 500;
+            font-size: 0.9rem;
+            transition: background 0.2s;
         }
-
-        .timer-text {
-            color: var(--timer-green);
-            font-weight: 600;
-            font-size: 15px;
-        }
-
-        #signals-container {
-            display: flex;
-            flex-direction: column;
+        .btn:hover { background-color: #475569; }
+        .timer { color: #2dd4bf; font-weight: bold; }
+        
+        /* Grid Setup */
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
             gap: 20px;
-            max-width: 500px;
         }
-
-        .signal-card {
+        .card {
             background-color: var(--card-bg);
-            border-radius: 12px;
+            border-radius: 10px;
             padding: 20px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+            border: 1px solid #334155;
         }
-
-        .card-header {
-            color: var(--text-muted);
-            font-weight: 600;
-            font-size: 15px;
-            margin-bottom: 10px;
-            text-transform: uppercase;
-        }
-
-        .signal-header-row {
+        .card h2 { margin-top: 0; font-size: 1.2rem; color: var(--text-muted); }
+        
+        /* Signal Header with Timer */
+        .signal-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
             margin-bottom: 15px;
         }
-
-        .signal-text {
-            font-size: 28px;
-            font-weight: 800;
-            margin: 0;
-        }
-
-        .signal-sell { color: var(--sell-red); }
-        .signal-buy { color: var(--buy-green); }
-
-        .triggered-text {
-            color: var(--trigger-yellow);
-            font-size: 13px;
-            font-weight: 600;
-        }
-
-        .data-row {
-            background-color: var(--inner-bg);
-            padding: 12px 15px;
-            border-radius: 6px;
-            margin-bottom: 8px;
-            font-size: 14px;
-            display: flex;
-            justify-content: flex-start;
-        }
+        .signal-action { font-size: 2rem; font-weight: bold; }
+        .time-ago { font-size: 0.9rem; color: var(--yellow); font-weight: bold; }
         
-        .data-row:last-child {
-            margin-bottom: 0;
-        }
+        .WAIT { color: var(--text-muted); }
+        .BUY { color: var(--green); }
+        .SELL { color: var(--red); }
+        
+        .data-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .data-box { background: #0f172a; padding: 12px; border-radius: 6px; font-size: 0.9rem; }
+        .tp { color: var(--green); }
+        .sl { color: var(--red); }
 
-        .data-label { color: var(--text-muted); margin-right: 5px; }
-        .data-value { color: var(--text-main); font-weight: 500; }
-        .val-tp { color: var(--buy-green); font-weight: 500; }
-        .val-sl { color: var(--sell-red); font-weight: 500; }
+        /* Mobile Responsive */
+        @media (max-width: 600px) {
+            .header-container { flex-direction: column; align-items: flex-start; }
+            .data-grid { grid-template-columns: 1fr; }
+            .card h2 { font-size: 1.1rem; }
+        }
     </style>
 </head>
 <body>
-
-    <h1>Quant Signal System</h1>
-    
-    <div class="top-controls">
-        <button class="btn-journal">View Trading Journal</button>
-        <span class="timer-text" id="refresh-timer">Next Refresh In: 45s</span>
+    <div class="header-container">
+        <h1>QUANT SIGNAL SYSTEM</h1>
+        <div class="header-controls">
+            <a href="/journal" class="btn">View Trading Journal</a>
+            <div class="timer" id="timerDisplay">Next Refresh In: 45s</div>
+        </div>
     </div>
 
-    <div id="signals-container">
-        <div style="color: #8b93a6;">Connecting to signal backend...</div>
+    <div class="grid" id="signals-container">
+        <div style="color: var(--text-muted);">Initializing system... please wait up to 10 seconds.</div>
     </div>
 
     <script>
-        const REFRESH_INTERVAL = 45; 
-        let secondsRemaining = REFRESH_INTERVAL;
+        let countdown = 45;
 
         async function fetchSignals() {
             try {
                 const response = await fetch('/api/signals');
-                if (response.ok) {
-                    const data = await response.json();
-                    if (data && data.length > 0) {
-                        renderSignals(data);
-                    } else {
-                        document.getElementById('signals-container').innerHTML = '<div style="color: #8b93a6;">No active live signals from API.</div>';
-                    }
-                } else {
-                    document.getElementById('signals-container').innerHTML = '<div style="color: #ff4a5a;">API route error. Status: ' + response.status + '</div>';
+                if (!response.ok) {
+                    throw new Error(`Server returned status: ${response.status}`);
                 }
-            } catch (error) {
-                document.getElementById('signals-container').innerHTML = '<div style="color: #ff4a5a;">Error: Connection to server lost.</div>';
-            }
-        }
-
-        function renderSignals(data) {
-            const container = document.getElementById('signals-container');
-            let html = '';
-
-            data.forEach(item => {
-                const isSell = (item.signal || '').toUpperCase() === 'SELL';
-                const signalClass = isSell ? 'signal-sell' : 'signal-buy';
                 
-                const pair = item.pair || '--';
-                const timeframe = item.timeframe || '--';
-                const signal = (item.signal || 'WAIT').toUpperCase();
-                const triggered = item.triggered || '--';
-                const entry = item.entry || '--';
-                const reason = item.reason || '--';
-                const tp = item.take_profit || '--';
-                const sl = item.stop_loss || '--';
+                const data = await response.json();
+                const container = document.getElementById('signals-container');
+                container.innerHTML = ''; // Clear loading text
 
-                html += `
-                    <div class="signal-card">
-                        <div class="card-header">${pair} (${timeframe})</div>
-                        <div class="signal-header-row">
-                            <h2 class="signal-text ${signalClass}">${signal}</h2>
-                            <span class="triggered-text">Triggered: ${triggered}</span>
-                        </div>
-                        
-                        <div class="data-row">
-                            <span class="data-label">Entry:</span>
-                            <span class="data-value">${entry}</span>
-                        </div>
-                        <div class="data-row">
-                            <span class="data-label">Reason:</span>
-                            <span class="data-value">${reason}</span>
-                        </div>
-                        <div class="data-row">
-                            <span class="data-label" style="color: var(--buy-green);">Take Profit:</span>
-                            <span class="val-tp">${tp}</span>
-                        </div>
-                        <div class="data-row">
-                            <span class="data-label" style="color: var(--sell-red);">Stop Loss:</span>
-                            <span class="val-sl">${sl}</span>
-                        </div>
-                    </div>
-                `;
-            });
-
-            container.innerHTML = html;
-        }
-
-        function updateTimer() {
-            secondsRemaining--;
-            if (secondsRemaining <= 0) {
-                document.getElementById('refresh-timer').innerText = "Refreshing...";
-                fetchSignals();
-                secondsRemaining = REFRESH_INTERVAL;
-            } else {
-                document.getElementById('refresh-timer').innerText = `Next Refresh In: ${secondsRemaining}s`;
-            }
-        }
-
-        // Run fetch immediately on load, then begin 1-second countdown loop
-        fetchSignals(); 
-        setInterval(updateTimer, 1000);
-    </script>
-</body>
-</html>
+                // Handle global python crash
+                if (data.SYSTEM_ERROR) {
+                    container.innerHTML = `
+                        <div class="card" style="border-top: 4px solid var(--red); grid-column: 1 / -1;">
+                            <h2>SYSTEM ERROR</h2>
+                            <div class="reason"
