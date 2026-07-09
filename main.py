@@ -7,6 +7,8 @@ from datetime import datetime, timedelta
 from fastapi import FastAPI, Request, Depends
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+
+# Standard Database Imports
 from sqlalchemy.orm import Session
 from database import engine, SessionLocal, Base, TradeJournal, get_db
 
@@ -18,7 +20,6 @@ TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "YOUR_API_KEY_HERE")
 PAIRS = [
     "XAU/USD",
     "EUR/USD",
-    # "GBP/USD" 
 ]
 
 last_logged_signal = {} 
@@ -46,7 +47,7 @@ def analyze_strategy(data, pair: str, db: Session):
     try:
         global last_logged_signal, signal_timestamps, active_trend
 
-        # 1. FIXED TIME FILTER: Pauses strictly anytime after 8:30 PM UAE
+        # 1. FIXED TIME FILTER: Pauses strictly anytime after 8:30 PM
         current_time = datetime.utcnow() + timedelta(hours=4)
         if (current_time.hour == 20 and current_time.minute >= 30) or current_time.hour > 20:
             return {"action": "WAIT", "reason": "Paused: Time limit (8:30 PM)", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
@@ -59,27 +60,27 @@ def analyze_strategy(data, pair: str, db: Session):
             return {"action": "WAIT", "reason": "Wait: Gathering data", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
 
         # Indicators
-        ema5 = df.ta.ema(length=5).iloc[-2]
-        ema13 = df.ta.ema(length=13).iloc[-2]
-        rsi = df.ta.rsi(length=14).iloc[-2]
-        atr = df.ta.atr(length=14).iloc[-2]
+        ema5 = float(df.ta.ema(length=5).iloc[-2])
+        ema13 = float(df.ta.ema(length=13).iloc[-2])
+        rsi = float(df.ta.rsi(length=14).iloc[-2])
+        atr = float(df.ta.atr(length=14).iloc[-2])
 
         bb_std = 2.8 if "XAU" in pair else 2.0
         bb = df.ta.bbands(length=20, std=bb_std)
         
         bb_cols = bb.columns
-        lower_band = bb[[c for c in bb_cols if "BBL" in c][0]].iloc[-2]
-        upper_band = bb[[c for c in bb_cols if "BBU" in c][0]].iloc[-2]
+        lower_band = float(bb[[c for c in bb_cols if "BBL" in c][0]].iloc[-2])
+        upper_band = float(bb[[c for c in bb_cols if "BBU" in c][0]].iloc[-2])
 
-        close = df.iloc[-2]["close"]
+        close = float(df.iloc[-2]["close"])
         candle_time = df.iloc[-2]["datetime"]
         decimals = 2 if "XAU" in pair else 5
 
-        # 2. RESTORED TREND LOCK: Forces WAIT after a signal is caught
+        # 2. RESTORED TREND LOCK
         if active_trend.get(pair) == "BUY" and not (ema5 < ema13):
-            return {"action": "WAIT", "reason": "Wait: Trend locked (BUY active)", "entry": round(close, decimals), "sl": "-", "tp": "-", "timestamp": 0}
+            return {"action": "WAIT", "reason": "Wait: Trend locked (BUY active)", "entry": float(round(close, decimals)), "sl": "-", "tp": "-", "timestamp": 0}
         if active_trend.get(pair) == "SELL" and not (ema5 > ema13):
-            return {"action": "WAIT", "reason": "Wait: Trend locked (SELL active)", "entry": round(close, decimals), "sl": "-", "tp": "-", "timestamp": 0}
+            return {"action": "WAIT", "reason": "Wait: Trend locked (SELL active)", "entry": float(round(close, decimals)), "sl": "-", "tp": "-", "timestamp": 0}
 
         # CONDITIONS
         if ema5 > ema13 and rsi > 52 and close < upper_band:
@@ -96,29 +97,34 @@ def analyze_strategy(data, pair: str, db: Session):
             elif close >= upper_band: reason = "Wait: Price hitting ceiling"
             elif close <= lower_band: reason = "Wait: Price hitting floor"
             else: reason = "Wait: No signal"
-            return {"action": "WAIT", "reason": reason, "entry": round(close, decimals), "sl": "-", "tp": "-", "timestamp": 0}
+            return {"action": "WAIT", "reason": reason, "entry": float(round(close, decimals)), "sl": "-", "tp": "-", "timestamp": 0}
 
         signal_id = f"{pair}_{str(candle_time)}_{action}"
         if signal_id not in signal_timestamps: signal_timestamps[signal_id] = int(time.time())
 
+        # FORCED PYTHON FLOATS (Prevents JSON Serialization Crash)
+        sl_calc = close - (1.3*atr) if action == "BUY" else close + (1.3*atr)
+        tp_calc = close + (1.5*atr) if action == "BUY" else close - (1.5*atr)
+
         signal = {
             "action": action, 
-            "entry": round(close, decimals),
-            "sl": round(close - (1.3*atr) if action == "BUY" else close + (1.3*atr), decimals),
-            "tp": round(close + (1.5*atr) if action == "BUY" else close - (1.5*atr), decimals),
-            "reason": reason, 
-            "timestamp": signal_timestamps[signal_id]
+            "entry": float(round(close, decimals)),
+            "sl": float(round(sl_calc, decimals)),
+            "tp": float(round(tp_calc, decimals)),
+            "reason": str(reason), 
+            "timestamp": int(signal_timestamps[signal_id])
         }
 
-        # 3. SAFE DATABASE EXECUTION: Prevents silent crashes
-        try:
-            if last_logged_signal.get(pair) != str(candle_time):
-                db.add(TradeJournal(pair=pair, action=action, entry_price=signal["entry"], 
-                                    stop_loss=signal["sl"], take_profit=signal["tp"], reason=reason))
-                db.commit()
-                last_logged_signal[pair] = str(candle_time)
-        except Exception:
-            db.rollback() 
+        # 3. SAFE DATABASE LOGGING
+        if db:
+            try:
+                if last_logged_signal.get(pair) != str(candle_time):
+                    db.add(TradeJournal(pair=pair, action=action, entry_price=signal["entry"], 
+                                        stop_loss=signal["sl"], take_profit=signal["tp"], reason=reason))
+                    db.commit()
+                    last_logged_signal[pair] = str(candle_time)
+            except Exception:
+                db.rollback() 
             
         return signal
         
@@ -137,10 +143,30 @@ async def journal_page(request: Request, db: Session = Depends(get_db)):
         trades = []
     return templates.TemplateResponse(request=request, name="journal.html", context={"trades": trades})
 
+# THE NUCLEAR ROUTE: Uncrashable master wrapper
 @app.get("/api/signals")
-async def get_signals(db: Session = Depends(get_db)):
-    signals = {}
-    for pair in PAIRS:
-        df = fetch_market_data(pair)
-        signals[pair] = analyze_strategy(df, pair, db)
-    return signals
+async def get_signals():
+    try:
+        # Manually safely connect to DB to bypass Dependency crashes
+        db_session = None
+        try:
+            db_session = SessionLocal()
+        except Exception:
+            pass 
+
+        signals = {}
+        for pair in PAIRS:
+            try:
+                df = fetch_market_data(pair)
+                signals[pair] = analyze_strategy(df, pair, db_session)
+            except Exception as strat_err:
+                signals[pair] = {"action": "WAIT", "reason": f"STRAT CRASH: {str(strat_err)}", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
+        
+        if db_session:
+            try: db_session.close()
+            except: pass
+            
+        return signals
+    except Exception as master_err:
+        # If absolutely anything breaks, it pushes a UI card instead of crashing the server
+        return {"SYSTEM_ERROR": {"action": "WAIT", "reason": f"API CRASH: {str(master_err)}", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}}
