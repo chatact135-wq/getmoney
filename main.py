@@ -8,9 +8,17 @@ from fastapi import FastAPI, Request, Depends
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
-# Standard Database Imports
-from sqlalchemy.orm import Session
-from database import engine, SessionLocal, Base, TradeJournal, get_db
+# Safely import DB so the app doesn't crash if database.py is missing
+try:
+    from sqlalchemy.orm import Session
+    from database import engine, SessionLocal, Base, TradeJournal, get_db
+    DB_AVAILABLE = True
+except ImportError:
+    DB_AVAILABLE = False
+    SessionLocal = None
+    TradeJournal = None
+    def get_db():
+        yield None
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
@@ -29,7 +37,8 @@ active_trend = {}
 def fetch_market_data(symbol: str):
     url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=15min&outputsize=50&apikey={TWELVEDATA_API_KEY}"
     try:
-        response = requests.get(url).json()
+        # TIMEOUT ADDED: Prevents the server from freezing if TwelveData is slow!
+        response = requests.get(url, timeout=10).json()
         if "status" in response and response["status"] == "error":
             return {"api_error": response.get("message", "TwelveData API Error")}
         if "values" not in response:
@@ -43,7 +52,7 @@ def fetch_market_data(symbol: str):
     except Exception as e:
         return {"api_error": f"Fetch Error: {str(e)}"}
 
-def analyze_strategy(data, pair: str, db: Session):
+def analyze_strategy(data, pair: str, db):
     try:
         global last_logged_signal, signal_timestamps, active_trend
 
@@ -116,7 +125,7 @@ def analyze_strategy(data, pair: str, db: Session):
         }
 
         # 3. SAFE DATABASE LOGGING
-        if db:
+        if db and DB_AVAILABLE:
             try:
                 if last_logged_signal.get(pair) != str(candle_time):
                     db.add(TradeJournal(pair=pair, action=action, entry_price=signal["entry"], 
@@ -124,7 +133,7 @@ def analyze_strategy(data, pair: str, db: Session):
                     db.commit()
                     last_logged_signal[pair] = str(candle_time)
             except Exception:
-                db.rollback() 
+                pass # Fail silently so UI doesn't break
             
         return signal
         
@@ -132,28 +141,30 @@ def analyze_strategy(data, pair: str, db: Session):
         return {"action": "WAIT", "reason": f"CRASH: {str(e)}", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
 
 @app.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request):
+def dashboard(request: Request):
     return templates.TemplateResponse(request=request, name="index.html")
 
 @app.get("/journal", response_class=HTMLResponse)
-async def journal_page(request: Request, db: Session = Depends(get_db)):
-    try:
-        trades = db.query(TradeJournal).order_by(TradeJournal.timestamp.desc()).limit(50).all()
-    except:
-        trades = []
+def journal_page(request: Request, db = Depends(get_db)):
+    trades = []
+    if DB_AVAILABLE and db:
+        try:
+            trades = db.query(TradeJournal).order_by(TradeJournal.timestamp.desc()).limit(50).all()
+        except:
+            pass
     return templates.TemplateResponse(request=request, name="journal.html", context={"trades": trades})
 
-# THE NUCLEAR ROUTE: Uncrashable master wrapper
+# REMOVED ASYNC: This prevents the entire server from freezing!
 @app.get("/api/signals")
-async def get_signals():
-    try:
-        # Manually safely connect to DB to bypass Dependency crashes
-        db_session = None
+def get_signals():
+    db_session = None
+    if DB_AVAILABLE:
         try:
             db_session = SessionLocal()
         except Exception:
             pass 
 
+    try:
         signals = {}
         for pair in PAIRS:
             try:
@@ -161,12 +172,10 @@ async def get_signals():
                 signals[pair] = analyze_strategy(df, pair, db_session)
             except Exception as strat_err:
                 signals[pair] = {"action": "WAIT", "reason": f"STRAT CRASH: {str(strat_err)}", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
-        
+        return signals
+    except Exception as master_err:
+        return {"SYSTEM_ERROR": {"action": "WAIT", "reason": f"API CRASH: {str(master_err)}", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}}
+    finally:
         if db_session:
             try: db_session.close()
             except: pass
-            
-        return signals
-    except Exception as master_err:
-        # If absolutely anything breaks, it pushes a UI card instead of crashing the server
-        return {"SYSTEM_ERROR": {"action": "WAIT", "reason": f"API CRASH: {str(master_err)}", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}}
