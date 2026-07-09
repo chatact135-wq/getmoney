@@ -16,7 +16,6 @@ templates = Jinja2Templates(directory="templates")
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "YOUR_API_KEY_HERE")
 
 # The order here determines how they appear on the dashboard.
-# Gold is now first, Euro is second.
 PAIRS = [
     "XAU/USD",
     "EUR/USD",
@@ -29,7 +28,8 @@ signal_timestamps = {}
 active_trend = {} 
 
 def fetch_market_data(symbol: str):
-    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=5min&outputsize=50&apikey={TWELVEDATA_API_KEY}"
+    # UPDATED: interval is now 15min
+    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=15min&outputsize=50&apikey={TWELVEDATA_API_KEY}"
     try:
         response = requests.get(url).json()
         if "status" in response and response["status"] == "error":
@@ -63,8 +63,10 @@ def analyze_strategy(data, pair: str, db: Session):
     rsi = df.ta.rsi(length=14).iloc[-2]
     atr = df.ta.atr(length=14).iloc[-2]
 
-    # ROBUST Bollinger Bands
-    bb = df.ta.bbands(length=20, std=2)
+    # DYNAMIC BOLLINGER BANDS: 2.8 for Gold to prevent early ceiling hits, 2.0 for Forex
+    bb_std = 2.8 if "XAU" in pair else 2.0
+    bb = df.ta.bbands(length=20, std=bb_std)
+    
     bb_cols = bb.columns
     lower_band = bb[[c for c in bb_cols if "BBL" in c][0]].iloc[-2]
     upper_band = bb[[c for c in bb_cols if "BBU" in c][0]].iloc[-2]
