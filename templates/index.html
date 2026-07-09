@@ -21,7 +21,6 @@
             margin: 0;
             padding: 15px;
         }
-        /* Header Setup */
         .header-container {
             display: flex;
             justify-content: space-between;
@@ -46,7 +45,6 @@
         .btn:hover { background-color: #475569; }
         .timer { color: #2dd4bf; font-weight: bold; }
         
-        /* Grid Setup */
         .grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
@@ -60,7 +58,6 @@
         }
         .card h2 { margin-top: 0; font-size: 1.2rem; color: var(--text-muted); }
         
-        /* Signal Header with Timer */
         .signal-header {
             display: flex;
             justify-content: space-between;
@@ -79,7 +76,6 @@
         .tp { color: var(--green); }
         .sl { color: var(--red); }
 
-        /* Mobile Responsive */
         @media (max-width: 600px) {
             .header-container { flex-direction: column; align-items: flex-start; }
             .data-grid { grid-template-columns: 1fr; }
@@ -97,7 +93,7 @@
     </div>
 
     <div class="grid" id="signals-container">
-        <div style="color: var(--text-muted);">Initializing system... please wait up to 10 seconds.</div>
+        <div style="color: var(--text-muted);">Loading live market data...</div>
     </div>
 
     <script>
@@ -106,17 +102,69 @@
         async function fetchSignals() {
             try {
                 const response = await fetch('/api/signals');
-                if (!response.ok) {
-                    throw new Error(`Server returned status: ${response.status}`);
-                }
-                
                 const data = await response.json();
+                
                 const container = document.getElementById('signals-container');
-                container.innerHTML = ''; // Clear loading text
+                container.innerHTML = '';
 
-                // Handle global python crash
-                if (data.SYSTEM_ERROR) {
-                    container.innerHTML = `
-                        <div class="card" style="border-top: 4px solid var(--red); grid-column: 1 / -1;">
-                            <h2>SYSTEM ERROR</h2>
-                            <div class="reason"
+                for (const [pair, signal] of Object.entries(data)) {
+                    const card = document.createElement('div');
+                    card.className = 'card';
+                    
+                    let actionClass = signal.action === 'BUY' ? 'BUY' : signal.action === 'SELL' ? 'SELL' : 'WAIT';
+                    
+                    let timeBadge = '';
+                    if (signal.action !== 'WAIT' && signal.timestamp) {
+                        timeBadge = `<div class="time-ago" data-timestamp="${signal.timestamp}">Triggered: Just now</div>`;
+                    }
+
+                    card.innerHTML = `
+                        <h2>${pair} (15M)</h2>
+                        <div class="signal-header">
+                            <div class="signal-action ${actionClass}">${signal.action}</div>
+                            ${timeBadge}
+                        </div>
+                        <div class="data-grid">
+                            <div class="data-box">Entry: ${signal.entry}</div>
+                            <div class="data-box" style="grid-column: span 2;">Reason: ${signal.reason}</div>
+                            <div class="data-box tp">Take Profit: ${signal.tp}</div>
+                            <div class="data-box sl">Stop Loss: ${signal.sl}</div>
+                        </div>
+                    `;
+                    container.appendChild(card);
+                }
+            } catch (e) {
+                console.error("Fetch error", e);
+            }
+        }
+
+        setInterval(() => {
+            countdown--;
+            if (countdown <= 0) {
+                countdown = 45;
+                fetchSignals();
+            }
+            document.getElementById('timerDisplay').innerText = `Next Refresh In: ${countdown}s`;
+        }, 1000);
+
+        setInterval(() => {
+            const now = Math.floor(Date.now() / 1000);
+            document.querySelectorAll('.time-ago').forEach(el => {
+                const ts = parseInt(el.getAttribute('data-timestamp'));
+                if (!ts) return;
+                
+                const diff = now - ts;
+                if (diff < 60) {
+                    el.innerText = `Triggered: ${diff}s ago`;
+                } else {
+                    const mins = Math.floor(diff / 60);
+                    const secs = diff % 60;
+                    el.innerText = `Triggered: ${mins}m ${secs}s ago`;
+                }
+            });
+        }, 1000);
+
+        fetchSignals();
+    </script>
+</body>
+</html>
