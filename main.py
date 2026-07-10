@@ -51,19 +51,16 @@ def analyze_strategy(data, pair: str, db: Session):
     close = float(df.iloc[-2]["close"])
     candle_time = df.iloc[-2]["datetime"]
 
-    # 1. SIMPLE TIME FILTER (Pauses signals anytime after 8:30 PM UAE)
+    # 1. SIMPLE TIME FILTER (Pauses signals anytime after 8:30 PM)
     current_time = datetime.utcnow() + timedelta(hours=4)
     if (current_time.hour == 20 and current_time.minute >= 30) or current_time.hour > 20:
         return {"action": "WAIT", "reason": "Paused: Time limit (8:30 PM)", "entry": round(close, decimals), "sl": "-", "tp": "-", "timestamp": 0}
 
-    # 2. INDICATORS (Forced to floats to prevent JSON crashes)
-    ema9 = float(df.ta.ema(length=9).iloc[-2])
-    ema21 = float(df.ta.ema(length=21).iloc[-2])
+    # 2. INDICATORS (Original 5/13 + The 200 EMA Filter)
+    ema5 = float(df.ta.ema(length=5).iloc[-2])
+    ema13 = float(df.ta.ema(length=13).iloc[-2])
     ema200 = float(df.ta.ema(length=200).iloc[-2])
     
-    adx_df = df.ta.adx(length=14)
-    adx = float(adx_df.iloc[-2, 0]) 
-
     rsi = float(df.ta.rsi(length=14).iloc[-2])
     atr = float(df.ta.atr(length=14).iloc[-2])
 
@@ -73,21 +70,21 @@ def analyze_strategy(data, pair: str, db: Session):
     lower_band = float(bb[[c for c in bb_cols if "BBL" in c][0]].iloc[-2])
     upper_band = float(bb[[c for c in bb_cols if "BBU" in c][0]].iloc[-2])
 
-    # 3. PROFESSIONAL CONDITIONS
+    # 3. TEST CONDITIONS: Base Strategy + 200 EMA
     action = "WAIT"
     
-    if ema9 > ema21 and close > ema200 and adx > 20 and rsi > 52 and close < upper_band:
+    if ema5 > ema13 and close > ema200 and rsi > 52 and close < upper_band:
         action = "BUY"
-        reason = "Confirmed Bullish Trend"
-    elif ema9 < ema21 and close < ema200 and adx > 20 and rsi < 48 and close > lower_band:
+        reason = "Bullish Breakout (200 EMA Confirmed)"
+    elif ema5 < ema13 and close < ema200 and rsi < 48 and close > lower_band:
         action = "SELL"
-        reason = "Confirmed Bearish Trend"
+        reason = "Bearish Breakout (200 EMA Confirmed)"
     else:
-        if close < ema200 and ema9 > ema21: reason = "Wait: Blocked counter-trend BUY"
-        elif close > ema200 and ema9 < ema21: reason = "Wait: Blocked counter-trend SELL"
-        elif adx <= 20: reason = "Wait: Market is chopping (Low ADX)"
+        # Diagnostic feedback to show you if the 200 EMA is doing its job
+        if close < ema200 and ema5 > ema13: reason = "Wait: Blocked counter-trend BUY"
+        elif close > ema200 and ema5 < ema13: reason = "Wait: Blocked counter-trend SELL"
         elif not (rsi > 52 or rsi < 48): reason = "Wait: RSI Neutral"
-        elif not (ema9 > ema21 or ema9 < ema21): reason = "Wait: EMAs flat"
+        elif not (ema5 > ema13 or ema5 < ema13): reason = "Wait: EMAs flat"
         elif close >= upper_band: reason = "Wait: Price hitting ceiling"
         elif close <= lower_band: reason = "Wait: Price hitting floor"
         else: reason = "Wait: Scanning..."
@@ -131,7 +128,6 @@ def analyze_strategy(data, pair: str, db: Session):
             
     return signal
 
-# 4. FASTAPI ROUTES (Using the required request=request, name="..." syntax)
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
     return templates.TemplateResponse(request=request, name="index.html")
