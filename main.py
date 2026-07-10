@@ -23,9 +23,9 @@ PAIRS = [
 last_logged_signal = {} 
 signal_timestamps = {}
 
-def fetch_market_data(symbol: str):
-    # Pulls 250 candles to ensure the 200 EMA has enough data to calculate correctly
-    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=15min&outputsize=250&apikey={TWELVEDATA_API_KEY}"
+def fetch_tf_data(symbol: str, interval: str, outputsize: int = 250):
+    """Helper to fetch data for specific timeframes safely."""
+    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval={interval}&outputsize={outputsize}&apikey={TWELVEDATA_API_KEY}"
     try:
         response = requests.get(url, timeout=10).json()
         if "status" in response and response["status"] == "error":
@@ -38,91 +38,94 @@ def fetch_market_data(symbol: str):
     except:
         return None
 
-def analyze_strategy(data, pair: str, db: Session):
+def analyze_mtf_strategy(pair: str, db: Session):
     global last_logged_signal, signal_timestamps
-
     decimals = 2 if "XAU" in pair else 5
 
-    # Requires at least 210 candles to safely calculate the 200 EMA macro baseline
-    if data is None or len(data) < 210:
-        return {"action": "WAIT", "reason": "Wait: Gathering historical data", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
+    # 1. FETCH MULTI-TIMEFRAME DATA
+    df_5m = fetch_tf_data(pair, "5min", outputsize=100)
+    df_1h = fetch_tf_data(pair, "1h", outputsize=250) # Need 250 for 1H 200 EMA
 
-    df = data
-    close = float(df.iloc[-2]["close"])
-    candle_time = df.iloc[-2]["datetime"]
+    if df_5m is None or df_1h is None or len(df_1h) < 210 or len(df_5m) < 30:
+        return {"action": "WAIT", "reason": "Wait: Syncing Timeframes...", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
 
-    # 1. SIMPLE TIME FILTER (Pauses signals anytime after 8:30 PM)
+    # Current execution parameters (5-Minute chart)
+    close_5m = float(df_5m.iloc[-2]["close"])
+    candle_time_5m = df_5m.iloc[-2]["datetime"]
+
+    # Macro parameters (1-Hour chart)
+    close_1h = float(df_1h.iloc[-2]["close"])
+    ema200_1h = float(df_1h.ta.ema(length=200).iloc[-2])
+
+    # 2. UAE TIME FILTER (8:30 PM Cutoff)
     current_time = datetime.utcnow() + timedelta(hours=4)
     if (current_time.hour == 20 and current_time.minute >= 30) or current_time.hour > 20:
-        return {"action": "WAIT", "reason": "Paused: Time limit (8:30 PM)", "entry": round(close, decimals), "sl": "-", "tp": "-", "timestamp": 0}
+        return {"action": "WAIT", "reason": "Paused: Time limit (8:30 PM)", "entry": round(close_5m, decimals), "sl": "-", "tp": "-", "timestamp": 0}
 
-    # 2. INDICATORS (Original 5/13 + The 200 EMA Filter)
-    ema5 = float(df.ta.ema(length=5).iloc[-2])
-    ema13 = float(df.ta.ema(length=13).iloc[-2])
-    ema200 = float(df.ta.ema(length=200).iloc[-2])
-    
-    rsi = float(df.ta.rsi(length=14).iloc[-2])
-    atr = float(df.ta.atr(length=14).iloc[-2])
+    # 3. CALCULATE 5-MINUTE INDICATORS FOR FREQUENCY
+    ema5 = float(df_5m.ta.ema(length=5).iloc[-2])
+    ema13 = float(df_5m.ta.ema(length=13).iloc[-2])
+    rsi = float(df_5m.ta.rsi(length=14).iloc[-2])
+    atr = float(df_5m.ta.atr(length=14).iloc[-2])
 
     bb_std = 2.8 if "XAU" in pair else 2.0
-    bb = df.ta.bbands(length=20, std=bb_std)
+    bb = df_5m.ta.bbands(length=20, std=bb_std)
     bb_cols = bb.columns
     lower_band = float(bb[[c for c in bb_cols if "BBL" in c][0]].iloc[-2])
     upper_band = float(bb[[c for c in bb_cols if "BBU" in c][0]].iloc[-2])
 
-    # 3. TEST CONDITIONS: Base Strategy + 200 EMA
+    # 4. CONDITIONAL LOGIC (1H Trend Filter + 5M Execution triggers)
     action = "WAIT"
     
-    if ema5 > ema13 and close > ema200 and rsi > 52 and close < upper_band:
-        action = "BUY"
-        reason = "Bullish Breakout (200 EMA Confirmed)"
-    elif ema5 < ema13 and close < ema200 and rsi < 48 and close > lower_band:
-        action = "SELL"
-        reason = "Bearish Breakout (200 EMA Confirmed)"
-    else:
-        # Diagnostic feedback to show you if the 200 EMA is doing its job
-        if close < ema200 and ema5 > ema13: reason = "Wait: Blocked counter-trend BUY"
-        elif close > ema200 and ema5 < ema13: reason = "Wait: Blocked counter-trend SELL"
-        elif not (rsi > 52 or rsi < 48): reason = "Wait: RSI Neutral"
-        elif not (ema5 > ema13 or ema5 < ema13): reason = "Wait: EMAs flat"
-        elif close >= upper_band: reason = "Wait: Price hitting ceiling"
-        elif close <= lower_band: reason = "Wait: Price hitting floor"
-        else: reason = "Wait: Scanning..."
+    if close_1h > ema200_1h: # Macro Uptrend
+        if ema5 > ema13 and rsi > 52 and close_5m < upper_band:
+            action = "BUY"
+            reason = "5M Breakout Aligned with 1H Macro Uptrend"
+        else:
+            if ema5 < ema13: reason = "Wait: Blocked counter-trend 5M SELL"
+            elif not (rsi > 52): reason = "Wait: 5M RSI Neutral"
+            elif close_5m >= upper_band: reason = "Wait: 5M Price Overextended"
+            else: reason = "Wait: Scanning 1H Bullish Market..."
+            
+    else: # Macro Downtrend
+        if ema5 < ema13 and rsi < 48 and close_5m > lower_band:
+            action = "SELL"
+            reason = "5M Breakout Aligned with 1H Macro Downtrend"
+        else:
+            if ema5 > ema13: reason = "Wait: Blocked counter-trend 5M BUY"
+            elif not (rsi < 48): reason = "Wait: 5M RSI Neutral"
+            elif close_5m <= lower_band: reason = "Wait: 5M Price Overextended"
+            else: reason = "Wait: Scanning 1H Bearish Market..."
 
-    # Signal Calculation
-    signal_id = f"{pair}_{str(candle_time)}_{action}"
+    # Signal Output & Journaling Calculation
+    signal_id = f"{pair}_{str(candle_time_5m)}_{action}"
     if signal_id not in signal_timestamps: 
         signal_timestamps[signal_id] = int(time.time())
 
     if action == "WAIT":
         signal = {
-            "action": "WAIT", 
-            "entry": round(close, decimals),
-            "sl": "-",
-            "tp": "-",
-            "reason": reason, 
-            "timestamp": 0
+            "action": "WAIT", "entry": round(close_5m, decimals),
+            "sl": "-", "tp": "-", "reason": reason, "timestamp": 0
         }
     else:
-        sl_calc = close - (1.3*atr) if action == "BUY" else close + (1.3*atr)
-        tp_calc = close + (1.5*atr) if action == "BUY" else close - (1.5*atr)
+        sl_calc = close_5m - (1.3 * atr) if action == "BUY" else close_5m + (1.3 * atr)
+        tp_calc = close_5m + (1.5 * atr) if action == "BUY" else close_5m - (1.5 * atr)
         
         signal = {
             "action": action, 
-            "entry": round(close, decimals),
+            "entry": round(close_5m, decimals),
             "sl": round(sl_calc, decimals),
             "tp": round(tp_calc, decimals),
             "reason": reason, 
             "timestamp": signal_timestamps[signal_id]
         }
 
-        # Safe DB Logging
         try:
-            if last_logged_signal.get(pair) != str(candle_time):
+            if last_logged_signal.get(pair) != str(candle_time_5m):
                 db.add(TradeJournal(pair=pair, action=action, entry_price=signal["entry"], 
                                     stop_loss=signal["sl"], take_profit=signal["tp"], reason=reason))
                 db.commit()
-                last_logged_signal[pair] = str(candle_time)
+                last_logged_signal[pair] = str(candle_time_5m)
         except:
             db.rollback() 
             
@@ -144,6 +147,5 @@ async def journal_page(request: Request, db: Session = Depends(get_db)):
 async def get_signals(db: Session = Depends(get_db)):
     signals = {}
     for pair in PAIRS:
-        df = fetch_market_data(pair)
-        signals[pair] = analyze_strategy(df, pair, db)
+        signals[pair] = analyze_mtf_strategy(pair, db)
     return signals
