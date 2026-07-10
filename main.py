@@ -24,9 +24,10 @@ last_logged_signal = {}
 signal_timestamps = {}
 
 def fetch_market_data(symbol: str):
-    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=15min&outputsize=50&apikey={TWELVEDATA_API_KEY}"
+    # Pulls 250 candles to ensure the 200 EMA has enough data to calculate correctly
+    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=15min&outputsize=250&apikey={TWELVEDATA_API_KEY}"
     try:
-        response = requests.get(url).json()
+        response = requests.get(url, timeout=10).json()
         if "status" in response and response["status"] == "error":
             return None
         df = pd.DataFrame(response["values"])
@@ -42,45 +43,54 @@ def analyze_strategy(data, pair: str, db: Session):
 
     decimals = 2 if "XAU" in pair else 5
 
-    if data is None or len(data) < 25:
-        return {"action": "WAIT", "reason": "Wait: Gathering data", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
+    # Requires at least 210 candles to safely calculate the 200 EMA macro baseline
+    if data is None or len(data) < 210:
+        return {"action": "WAIT", "reason": "Wait: Gathering historical data", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
 
     df = data
     close = float(df.iloc[-2]["close"])
     candle_time = df.iloc[-2]["datetime"]
 
-    # SIMPLE TIME FILTER (8:30 PM UAE)
+    # 1. SIMPLE TIME FILTER (Pauses signals anytime after 8:30 PM UAE)
     current_time = datetime.utcnow() + timedelta(hours=4)
     if (current_time.hour == 20 and current_time.minute >= 30) or current_time.hour > 20:
         return {"action": "WAIT", "reason": "Paused: Time limit (8:30 PM)", "entry": round(close, decimals), "sl": "-", "tp": "-", "timestamp": 0}
 
-    # Indicators
-    ema5 = float(df.ta.ema(length=5).iloc[-2])
-    ema13 = float(df.ta.ema(length=13).iloc[-2])
+    # 2. INDICATORS (Forced to floats to prevent JSON crashes)
+    ema9 = float(df.ta.ema(length=9).iloc[-2])
+    ema21 = float(df.ta.ema(length=21).iloc[-2])
+    ema200 = float(df.ta.ema(length=200).iloc[-2])
+    
+    adx_df = df.ta.adx(length=14)
+    adx = float(adx_df.iloc[-2, 0]) 
+
     rsi = float(df.ta.rsi(length=14).iloc[-2])
     atr = float(df.ta.atr(length=14).iloc[-2])
 
     bb_std = 2.8 if "XAU" in pair else 2.0
     bb = df.ta.bbands(length=20, std=bb_std)
-    
     bb_cols = bb.columns
     lower_band = float(bb[[c for c in bb_cols if "BBL" in c][0]].iloc[-2])
     upper_band = float(bb[[c for c in bb_cols if "BBU" in c][0]].iloc[-2])
 
-    # CONDITIONS
+    # 3. PROFESSIONAL CONDITIONS
     action = "WAIT"
-    if ema5 > ema13 and rsi > 52 and close < upper_band:
+    
+    if ema9 > ema21 and close > ema200 and adx > 20 and rsi > 52 and close < upper_band:
         action = "BUY"
-        reason = "Bullish Breakout"
-    elif ema5 < ema13 and rsi < 48 and close > lower_band:
+        reason = "Confirmed Bullish Trend"
+    elif ema9 < ema21 and close < ema200 and adx > 20 and rsi < 48 and close > lower_band:
         action = "SELL"
-        reason = "Bearish Breakout"
+        reason = "Confirmed Bearish Trend"
     else:
-        if not (rsi > 52 or rsi < 48): reason = "Wait: RSI Neutral"
-        elif not (ema5 > ema13 or ema5 < ema13): reason = "Wait: EMAs flat"
+        if close < ema200 and ema9 > ema21: reason = "Wait: Blocked counter-trend BUY"
+        elif close > ema200 and ema9 < ema21: reason = "Wait: Blocked counter-trend SELL"
+        elif adx <= 20: reason = "Wait: Market is chopping (Low ADX)"
+        elif not (rsi > 52 or rsi < 48): reason = "Wait: RSI Neutral"
+        elif not (ema9 > ema21 or ema9 < ema21): reason = "Wait: EMAs flat"
         elif close >= upper_band: reason = "Wait: Price hitting ceiling"
         elif close <= lower_band: reason = "Wait: Price hitting floor"
-        else: reason = "Wait: No signal"
+        else: reason = "Wait: Scanning..."
 
     # Signal Calculation
     signal_id = f"{pair}_{str(candle_time)}_{action}"
@@ -121,7 +131,7 @@ def analyze_strategy(data, pair: str, db: Session):
             
     return signal
 
-# FIXED: Fast API 0.112.0+ TemplateResponse Formatting
+# 4. FASTAPI ROUTES (Using the required request=request, name="..." syntax)
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
     return templates.TemplateResponse(request=request, name="index.html")
