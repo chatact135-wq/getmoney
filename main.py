@@ -1,5 +1,6 @@
 import os
 import time
+import asyncio
 import requests
 import pandas as pd
 import pandas_ta as ta
@@ -20,11 +21,14 @@ PAIRS = [
     "EUR/USD",
 ]
 
+# GLOBAL STATE: Stores the background bot's latest findings
+LATEST_SIGNALS = {pair: {"action": "WAIT", "reason": "Booting up...", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0} for pair in PAIRS}
+
 last_logged_signal = {} 
 signal_timestamps = {}
 
 def fetch_market_data(symbol: str):
-    """Fetches high-quality 5-minute candles to capture sharp intraday swings."""
+    """Fetches high-quality 5-minute candles."""
     url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=5min&outputsize=150&apikey={TWELVEDATA_API_KEY}"
     try:
         response = requests.get(url, timeout=10).json()
@@ -44,7 +48,7 @@ def analyze_dynamic_strategy(data, pair: str, db: Session):
     decimals = 2 if "XAU" in pair else 5
 
     if data is None or len(data) < 60:
-        return {"action": "WAIT", "reason": "Wait: Building initial market matrix", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
+        return {"action": "WAIT", "reason": "Wait: Gathering market data", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
 
     df = data
     close = float(df.iloc[-2]["close"])
@@ -55,46 +59,38 @@ def analyze_dynamic_strategy(data, pair: str, db: Session):
     if (current_time.hour == 20 and current_time.minute >= 30) or current_time.hour > 20:
         return {"action": "WAIT", "reason": "Paused: Time limit (8:30 PM)", "entry": round(close, decimals), "sl": "-", "tp": "-", "timestamp": 0}
 
-    # 2. CALCULATE EXECUTABLE DYNAMIC INDICATORS
+    # 2. DYNAMIC INDICATORS
     ema9 = float(df.ta.ema(length=9).iloc[-2])
     ema21 = float(df.ta.ema(length=21).iloc[-2])
-    ema50 = float(df.ta.ema(length=50).iloc[-2]) # Replaces the rigid 200 EMA
+    ema50 = float(df.ta.ema(length=50).iloc[-2]) 
     
     rsi = float(df.ta.rsi(length=14).iloc[-2])
     atr = float(df.ta.atr(length=14).iloc[-2])
 
-    # 3. BIDIRECTIONAL ALGORITHMIC LOGIC
+    # 3. ALGORITHMIC LOGIC
     action = "WAIT"
     reason = "Wait: Scanning for alignment..."
 
-    # BULLISH SWING WAVE CONDITIONS
     if close > ema50 and ema9 > ema21:
         if 50 < rsi < 68:
             action = "BUY"
             reason = "Intraday Bullish Wave Confirmed"
-        elif rsi >= 68:
-            reason = "Wait: BUY blocked (Market overbought)"
-            
-    # BEARISH SWING WAVE CONDITIONS
+        elif rsi >= 68: reason = "Wait: BUY blocked (Market overbought)"
     elif close < ema50 and ema9 < ema21:
         if 32 < rsi < 50:
             action = "SELL"
             reason = "Intraday Bearish Wave Confirmed"
-        elif rsi <= 32:
-            reason = "Wait: SELL blocked (Market oversold)"
-            
-    # DIAGNOSTIC TRANSITION STATES
+        elif rsi <= 32: reason = "Wait: SELL blocked (Market oversold)"
     else:
-        if ema9 > ema21 and close < ema50:
-            reason = "Wait: Minor upward correction in a local downtrend"
-        elif ema9 < ema21 and close > ema50:
-            reason = "Wait: Minor pullback in a local uptrend"
-        else:
-            reason = "Wait: Market consolidating flat"
+        if ema9 > ema21 and close < ema50: reason = "Wait: Minor upward correction"
+        elif ema9 < ema21 and close > ema50: reason = "Wait: Minor downward pullback"
+        else: reason = "Wait: Market consolidating flat"
 
-    # 4. VOLATILITY PROTECTION (ATR) & SIGNAL PACKAGING
+    # 4. SIGNAL PACKAGING & TIMESTAMPING
     signal_id = f"{pair}_{str(candle_time)}_{action}"
-    if signal_id not in signal_timestamps: 
+    
+    # Only assign a new timestamp if this is a brand new signal
+    if signal_id not in signal_timestamps and action != "WAIT": 
         signal_timestamps[signal_id] = int(time.time())
 
     if action == "WAIT":
@@ -103,7 +99,6 @@ def analyze_dynamic_strategy(data, pair: str, db: Session):
             "sl": "-", "tp": "-", "reason": reason, "timestamp": 0
         }
     else:
-        # Volatility adjusted parameters
         sl_calc = close - (1.5 * atr) if action == "BUY" else close + (1.5 * atr)
         tp_calc = close + (2.0 * atr) if action == "BUY" else close - (2.0 * atr)
         
@@ -116,7 +111,7 @@ def analyze_dynamic_strategy(data, pair: str, db: Session):
             "timestamp": signal_timestamps[signal_id]
         }
 
-        # Safe DB Journal Logging
+        # Safe DB Journal Logging in Background
         try:
             if last_logged_signal.get(pair) != str(candle_time):
                 db.add(TradeJournal(pair=pair, action=action, entry_price=signal["entry"], 
@@ -128,6 +123,32 @@ def analyze_dynamic_strategy(data, pair: str, db: Session):
             
     return signal
 
+# --- BACKGROUND TASK ENGINE ---
+async def background_bot_loop():
+    """Runs infinitely in the background, logging signals even when the dashboard is closed."""
+    while True:
+        db = SessionLocal() # Open a database connection for the background task
+        try:
+            for pair in PAIRS:
+                # Use to_thread to prevent the API request from freezing the web server
+                df = await asyncio.to_thread(fetch_market_data, pair)
+                if df is not None:
+                    signal = analyze_dynamic_strategy(df, pair, db)
+                    LATEST_SIGNALS[pair] = signal # Update the global state silently
+        except Exception as e:
+            print(f"Background Bot Error: {e}")
+        finally:
+            db.close()
+        
+        # Wait 60 seconds before scanning the market again
+        await asyncio.sleep(60)
+
+@app.on_event("startup")
+async def startup_event():
+    """Starts the background bot automatically when Railway boots the server."""
+    asyncio.create_task(background_bot_loop())
+
+# --- FASTAPI ROUTES ---
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
     return templates.TemplateResponse(request=request, name="index.html")
@@ -141,9 +162,6 @@ async def journal_page(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(request=request, name="journal.html", context={"trades": trades})
 
 @app.get("/api/signals")
-async def get_signals(db: Session = Depends(get_db)):
-    signals = {}
-    for pair in PAIRS:
-        df = fetch_market_data(pair)
-        signals[pair] = analyze_dynamic_strategy(df, pair, db)
-    return signals
+async def get_signals():
+    # Instantly returns the cached signals from the background loop
+    return LATEST_SIGNALS
