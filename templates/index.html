@@ -3,110 +3,112 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Intraday Trading Bot Dashboard</title>
+    <title>Precious Metals Algorithmic Fleet Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
-        body {
-            font-family: 'Inter', sans-serif;
-        }
+        body { font-family: 'Inter', sans-serif; }
     </style>
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col justify-between">
 
+    <!-- Header -->
     <header class="border-b border-slate-900 bg-slate-950/80 backdrop-blur-md sticky top-0 z-50">
         <div class="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
             <div class="flex items-center gap-3">
-                <span class="w-3 h-3 rounded-full bg-emerald-500 animate-pulse"></span>
-                <h1 class="text-lg font-bold tracking-tight">QUANT_BOT v2.0</h1>
+                <span class="w-3 h-3 rounded-full bg-cyan-500 animate-pulse"></span>
+                <h1 class="text-lg font-bold tracking-tight text-slate-200">METALS_QUANT_ENGINE v3.0</h1>
             </div>
             <nav class="flex gap-4">
-                <a href="/" class="text-sm font-semibold text-emerald-400 bg-emerald-500/10 px-3 py-1.5 rounded-lg border border-emerald-500/20">Dashboard</a>
-                <a href="/journal" class="text-sm font-semibold text-slate-400 hover:text-white px-3 py-1.5 transition-colors">Journal</a>
+                <a href="/" class="text-sm font-semibold text-cyan-400 bg-cyan-500/10 px-3 py-1.5 rounded-lg border border-cyan-500/20">Fleet Status</a>
+                <a href="/journal" class="text-sm font-semibold text-slate-400 hover:text-white px-3 py-1.5 transition-colors">Server Journal</a>
             </nav>
         </div>
     </header>
 
+    <!-- Content Grid -->
     <main class="max-w-7xl mx-auto px-6 py-12 flex-grow w-full">
         <div class="mb-10">
-            <h2 class="text-3xl font-bold tracking-tight">Active Market Signals</h2>
-            <p class="text-slate-400 mt-1">Real-time background-scanned dynamic momentum analysis.</p>
+            <h2 class="text-3xl font-bold tracking-tight">Precious Metals Workspace</h2>
+            <p class="text-slate-400 mt-1">Institutional Momentum & Squeeze Analytics Matrix.</p>
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
             
+            <!-- GOLD (XAU/USD) Card -->
             <div id="card-XAU-USD" class="relative overflow-hidden rounded-2xl border border-slate-900 bg-slate-900/40 p-8 transition-all duration-300">
                 <div class="flex justify-between items-start mb-6">
                     <div>
-                        <h3 class="text-2xl font-bold">Gold</h3>
-                        <p class="text-sm text-slate-400 font-mono">XAU/USD</p>
+                        <h3 class="text-2xl font-bold text-amber-500">Gold Matrix</h3>
+                        <p class="text-sm text-slate-500 font-mono">XAU/USD</p>
                     </div>
                     <span id="badge-XAU-USD" class="text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-slate-800 text-slate-400">
-                        Scanning...
+                        Analyzing...
                     </span>
                 </div>
 
                 <div class="grid grid-cols-3 gap-4 mb-8">
                     <div class="bg-slate-950/40 rounded-xl p-4 border border-slate-900/60">
-                        <p class="text-xs text-slate-500 font-semibold uppercase">Entry Price</p>
+                        <p class="text-xs text-slate-500 font-semibold uppercase">Trigger Entry</p>
                         <p id="entry-XAU-USD" class="text-lg font-mono font-bold mt-1">-</p>
                     </div>
                     <div class="bg-slate-950/40 rounded-xl p-4 border border-slate-900/60">
-                        <p class="text-xs text-slate-500 font-semibold uppercase text-rose-500">Stop Loss</p>
+                        <p class="text-xs text-slate-500 font-semibold uppercase text-rose-500">ATR Risk Boundary</p>
                         <p id="sl-XAU-USD" class="text-lg font-mono font-bold mt-1 text-rose-400">-</p>
                     </div>
                     <div class="bg-slate-950/40 rounded-xl p-4 border border-slate-900/60">
-                        <p class="text-xs text-slate-500 font-semibold uppercase text-emerald-500">Take Profit</p>
+                        <p class="text-xs text-slate-500 font-semibold uppercase text-emerald-500">Target Objective</p>
                         <p id="tp-XAU-USD" class="text-lg font-mono font-bold mt-1 text-emerald-400">-</p>
                     </div>
                 </div>
 
                 <div class="border-t border-slate-900/60 pt-6 flex flex-col gap-2">
                     <div class="flex justify-between text-sm">
-                        <span class="text-slate-500 font-medium">Status:</span>
-                        <span id="reason-XAU-USD" class="text-slate-300 font-semibold text-right">Awaiting initial background check...</span>
+                        <span class="text-slate-500 font-medium">Algorithmic Reason:</span>
+                        <span id="reason-XAU-USD" class="text-slate-300 font-semibold text-right">Awaiting data iteration...</span>
                     </div>
                     <div class="flex justify-between text-sm">
-                        <span class="text-slate-500 font-medium">Signal Age:</span>
+                        <span class="text-slate-500 font-medium">Signal Longevity:</span>
                         <span id="time-XAU-USD" class="text-slate-400 font-mono font-semibold">-</span>
                     </div>
                 </div>
             </div>
 
-            <div id="card-EUR-USD" class="relative overflow-hidden rounded-2xl border border-slate-900 bg-slate-900/40 p-8 transition-all duration-300">
+            <!-- SILVER (XAG/USD) Card -->
+            <div id="card-XAG-USD" class="relative overflow-hidden rounded-2xl border border-slate-900 bg-slate-900/40 p-8 transition-all duration-300">
                 <div class="flex justify-between items-start mb-6">
                     <div>
-                        <h3 class="text-2xl font-bold">Euro</h3>
-                        <p class="text-sm text-slate-400 font-mono">EUR/USD</p>
+                        <h3 class="text-2xl font-bold text-slate-300">Silver Matrix</h3>
+                        <p class="text-sm text-slate-500 font-mono">XAG/USD</p>
                     </div>
-                    <span id="badge-EUR-USD" class="text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-slate-800 text-slate-400">
-                        Scanning...
+                    <span id="badge-XAG-USD" class="text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-slate-800 text-slate-400">
+                        Analyzing...
                     </span>
                 </div>
 
                 <div class="grid grid-cols-3 gap-4 mb-8">
                     <div class="bg-slate-950/40 rounded-xl p-4 border border-slate-900/60">
-                        <p class="text-xs text-slate-500 font-semibold uppercase">Entry Price</p>
-                        <p id="entry-EUR-USD" class="text-lg font-mono font-bold mt-1">-</p>
+                        <p class="text-xs text-slate-500 font-semibold uppercase">Trigger Entry</p>
+                        <p id="entry-XAG-USD" class="text-lg font-mono font-bold mt-1">-</p>
                     </div>
                     <div class="bg-slate-950/40 rounded-xl p-4 border border-slate-900/60">
-                        <p class="text-xs text-slate-500 font-semibold uppercase text-rose-500">Stop Loss</p>
-                        <p id="sl-EUR-USD" class="text-lg font-mono font-bold mt-1 text-rose-400">-</p>
+                        <p class="text-xs text-slate-500 font-semibold uppercase text-rose-500">ATR Risk Boundary</p>
+                        <p id="sl-XAG-USD" class="text-lg font-mono font-bold mt-1 text-rose-400">-</p>
                     </div>
                     <div class="bg-slate-950/40 rounded-xl p-4 border border-slate-900/60">
-                        <p class="text-xs text-slate-500 font-semibold uppercase text-emerald-500">Take Profit</p>
-                        <p id="tp-EUR-USD" class="text-lg font-mono font-bold mt-1 text-emerald-400">-</p>
+                        <p class="text-xs text-slate-500 font-semibold uppercase text-emerald-500">Target Objective</p>
+                        <p id="tp-XAG-USD" class="text-lg font-mono font-bold mt-1 text-emerald-400">-</p>
                     </div>
                 </div>
 
                 <div class="border-t border-slate-900/60 pt-6 flex flex-col gap-2">
                     <div class="flex justify-between text-sm">
-                        <span class="text-slate-500 font-medium">Status:</span>
-                        <span id="reason-EUR-USD" class="text-slate-300 font-semibold text-right">Awaiting initial background check...</span>
+                        <span class="text-slate-500 font-medium">Algorithmic Reason:</span>
+                        <span id="reason-XAG-USD" class="text-slate-300 font-semibold text-right">Awaiting data iteration...</span>
                     </div>
                     <div class="flex justify-between text-sm">
-                        <span class="text-slate-500 font-medium">Signal Age:</span>
-                        <span id="time-EUR-USD" class="text-slate-400 font-mono font-semibold">-</span>
+                        <span class="text-slate-500 font-medium">Signal Longevity:</span>
+                        <span id="time-XAG-USD" class="text-slate-400 font-mono font-semibold">-</span>
                     </div>
                 </div>
             </div>
@@ -114,20 +116,20 @@
         </div>
     </main>
 
+    <!-- Footer -->
     <footer class="border-t border-slate-900 py-6 bg-slate-950/20">
         <div class="max-w-7xl mx-auto px-6 flex justify-between items-center text-xs text-slate-600">
-            <p>System operating on continuous asynchronous background scans (60s frequency).</p>
+            <p>Daemon scanning synchronized portfolios continuously in localized background architecture.</p>
             <p>&copy; 2026 QuantBot Server</p>
         </div>
     </footer>
 
+    <!-- STATE MANAGEMENT SCRIPT -->
     <script>
-        // Dictionary to locally hold dynamic state data
         let signalState = {};
 
         function updateUI() {
             for (const [pair, signal] of Object.entries(signalState)) {
-                // Formatting pair key for HTML selectors (slashes to hyphens)
                 const safeKey = pair.replace("/", "-");
 
                 const card = document.getElementById(`card-${safeKey}`);
@@ -140,34 +142,31 @@
 
                 if (!card) continue;
 
-                // 1. Update text values
                 entry.innerText = signal.entry;
                 sl.innerText = signal.sl;
                 tp.innerText = signal.tp;
                 reason.innerText = signal.reason;
 
-                // 2. Format Badge and Card highlight based on Action state
                 if (signal.action === "BUY") {
                     badge.className = "text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 animate-pulse";
-                    badge.innerText = "BUY";
-                    card.className = "relative overflow-hidden rounded-2xl border border-emerald-500/25 bg-slate-900/40 p-8 shadow-[0_0_20px_rgba(16,185,129,0.05)] transition-all duration-300";
+                    badge.innerText = "BUY ENTRY";
+                    card.className = "relative overflow-hidden rounded-2xl border border-emerald-500/25 bg-slate-900/40 p-8 shadow-[0_0_25px_rgba(16,185,129,0.04)] transition-all duration-300";
                 } else if (signal.action === "SELL") {
                     badge.className = "text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-rose-500/10 text-rose-400 border border-rose-500/20 animate-pulse";
-                    badge.innerText = "SELL";
-                    card.className = "relative overflow-hidden rounded-2xl border border-rose-500/25 bg-slate-900/40 p-8 shadow-[0_0_20px_rgba(239,68,68,0.05)] transition-all duration-300";
+                    badge.innerText = "SELL DISTRIBUTION";
+                    card.className = "relative overflow-hidden rounded-2xl border border-rose-500/25 bg-slate-900/40 p-8 shadow-[0_0_25px_rgba(239,68,68,0.04)] transition-all duration-300";
                 } else {
-                    badge.className = "text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-slate-800 text-slate-400 border border-transparent";
-                    badge.innerText = "WAITING";
+                    badge.className = "text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-slate-800 text-slate-500 border border-transparent";
+                    badge.innerText = "MONITORING";
                     card.className = "relative overflow-hidden rounded-2xl border border-slate-900 bg-slate-900/40 p-8 transition-all duration-300";
                 }
 
-                // 3. Compute elapsed time locally relative to the background Unix timestamp
                 if (signal.action !== "WAIT" && signal.timestamp > 0) {
-                    const now = Math.floor(Date.now() / 1000); // Current system time in Unix seconds
+                    const now = Math.floor(Date.now() / 1000);
                     const diffSeconds = now - signal.timestamp;
 
                     if (diffSeconds < 0) {
-                        timeEl.innerText = "Just now";
+                        timeEl.innerText = "Just initialized";
                     } else if (diffSeconds < 60) {
                         timeEl.innerText = `${diffSeconds}s ago`;
                     } else {
@@ -175,12 +174,11 @@
                         timeEl.innerText = `${diffMinutes}m ago`;
                     }
                 } else {
-                    timeEl.innerText = "N/A (Scanning...)";
+                    timeEl.innerText = "Continuous Scan Active";
                 }
             }
         }
 
-        // Pull dynamic cached signals from backend background process
         function fetchSignals() {
             fetch('/api/signals')
                 .then(response => response.json())
@@ -188,16 +186,11 @@
                     signalState = data;
                     updateUI();
                 })
-                .catch(error => console.error("Error fetching signal data:", error));
+                .catch(error => console.error("Operational Error Synchronizing States:", error));
         }
 
-        // Fetch updates immediately on page load
         fetchSignals();
-
-        // Check backend cache every 15 seconds to keep the dashboard refreshed
         setInterval(fetchSignals, 15000);
-
-        // Run UI recalculations locally every 1 second to make the "s ago" timer count down smoothly
         setInterval(updateUI, 1000);
     </script>
 </body>
