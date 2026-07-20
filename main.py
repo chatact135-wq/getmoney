@@ -16,14 +16,12 @@ templates = Jinja2Templates(directory="templates")
 
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "YOUR_API_KEY_HERE")
 
+# Exclusive focus on Gold
 PAIRS = [
-    "XAU/USD",
-    "XAG/USD",
+    "XAU/USD"
 ]
 
-# GLOBAL SERVER STATE
 LATEST_SIGNALS = {pair: {"action": "WAIT", "reason": "Initializing server matrix...", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0} for pair in PAIRS}
-
 last_logged_signal = {} 
 signal_timestamps = {}
 
@@ -32,12 +30,10 @@ def fetch_market_data(symbol: str):
     try:
         response = requests.get(url, timeout=10).json()
         if "status" in response and response["status"] == "error":
-            # EXPOSE API ERROR TO UI
             return f"API Error: {response.get('message', 'Unknown API issue')}"
-        
         if "values" not in response:
             return "API Error: No data returned. Check API Key or limit."
-
+        
         df = pd.DataFrame(response["values"])
         df["datetime"] = pd.to_datetime(df["datetime"])
         for col in ["open", "high", "low", "close"]: df[col] = df[col].astype(float)
@@ -46,14 +42,11 @@ def fetch_market_data(symbol: str):
     except Exception as e:
         return f"Fetch Exception: {str(e)}"
 
-def analyze_quant_strategy(data, pair: str, db: Session):
+def analyze_gold_master_strategy(data, pair: str, db: Session):
     global last_logged_signal, signal_timestamps
+    decimals = 2
 
-    if "XAG" in pair: decimals = 3
-    elif "XAU" in pair: decimals = 2
-    else: decimals = 5
-
-    # Check if data is an error string sent from fetch_market_data
+    # Error handling from fetch
     if isinstance(data, str):
         return {"action": "WAIT", "reason": data, "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
 
@@ -65,12 +58,14 @@ def analyze_quant_strategy(data, pair: str, db: Session):
         close = float(df.iloc[-2]["close"])
         candle_time = df.iloc[-2]["datetime"]
 
-        # 1. TIME LOCK FILTER
+        # 1. TIME LOCK FILTER (8:30 PM UAE)
         current_time = datetime.utcnow() + timedelta(hours=4)
         if (current_time.hour == 20 and current_time.minute >= 30) or current_time.hour > 20:
-            return {"action": "WAIT", "reason": "Paused: Time limit (8:30 PM)", "entry": round(close, decimals), "sl": "-", "tp": "-", "timestamp": 0}
+            return {"action": "WAIT", "reason": "Paused: Time limit (8:30 PM UAE)", "entry": round(close, decimals), "sl": "-", "tp": "-", "timestamp": 0}
 
-        # 2. INDICATORS
+        # 2. INDICATORS (Confluence Strategy)
+        ema9 = float(df.ta.ema(length=9).iloc[-2])
+        ema21 = float(df.ta.ema(length=21).iloc[-2])
         ema50 = float(df.ta.ema(length=50).iloc[-2]) 
         
         macd_df = df.ta.macd(fast=12, slow=26, signal=9)
@@ -80,37 +75,33 @@ def analyze_quant_strategy(data, pair: str, db: Session):
         rsi = float(df.ta.rsi(length=14).iloc[-2])
         atr = float(df.ta.atr(length=14).iloc[-2])
 
-        bb_std = 2.5
-        bb = df.ta.bbands(length=20, std=bb_std)
-        lower_band = float(bb.iloc[-2].iloc[0])
-        upper_band = float(bb.iloc[-2].iloc[2])
-        
-        bandwidth = (upper_band - lower_band) / ema50
-        historical_bandwidth_avg = float((bb.iloc[:, 2] - bb.iloc[:, 0]).rolling(window=50).mean().iloc[-2] / ema50)
-
-        # 3. LOGIC
+        # 3. CONFLUENCE LOGIC
         action = "WAIT"
         reason = "Wait: Tracking structural alignment..."
 
-        if bandwidth < (historical_bandwidth_avg * 0.65):
-            reason = "Wait: Squeeze detected (Low Volatility)"
-        elif close > ema50 and macd_line > macd_signal:
-            if 50 < rsi < 68 and close < upper_band:
+        # BUY LOGIC: Price > 50 EMA | 9 EMA > 21 EMA | MACD Line > Signal
+        if close > ema50 and ema9 > ema21 and macd_line > macd_signal:
+            if 50 < rsi < 70:
                 action = "BUY"
-                reason = "Institutional Momentum Breakout"
-            elif rsi >= 68: reason = "Wait: BUY Overextended"
-            elif close >= upper_band: reason = "Wait: Price hitting ceiling"
-        elif close < ema50 and macd_line < macd_signal:
-            if 32 < rsi < 50 and close > lower_band:
+                reason = "Trend & Momentum Confluence (BUY)"
+            elif rsi >= 70: 
+                reason = "Wait: Overbought (RSI > 70)"
+                
+        # SELL LOGIC: Price < 50 EMA | 9 EMA < 21 EMA | MACD Line < Signal
+        elif close < ema50 and ema9 < ema21 and macd_line < macd_signal:
+            if 30 < rsi < 50:
                 action = "SELL"
-                reason = "Institutional Velocity Distribution"
-            elif rsi <= 32: reason = "Wait: SELL Overextended"
-            elif close <= lower_band: reason = "Wait: Price hitting floor"
+                reason = "Trend & Momentum Confluence (SELL)"
+            elif rsi <= 30: 
+                reason = "Wait: Oversold (RSI < 30)"
+        
+        # Consolidation & Minor Pullbacks
         else:
-            if close > ema50 and macd_line < macd_signal: reason = "Wait: Bullish structure slowing"
-            elif close < ema50 and macd_line > macd_signal: reason = "Wait: Bearish structure slowing"
-            else: reason = "Wait: Market consolidating flat"
+            if close > ema50 and ema9 < ema21: reason = "Wait: Bullish Pullback Phase"
+            elif close < ema50 and ema9 > ema21: reason = "Wait: Bearish Pullback Phase"
+            else: reason = "Wait: Awaiting Momentum Cross"
 
+        # 4. SIGNAL PACKAGING & DB LOGGING
         signal_id = f"{pair}_{str(candle_time)}_{action}"
         if signal_id not in signal_timestamps and action != "WAIT": 
             signal_timestamps[signal_id] = int(time.time())
@@ -118,10 +109,9 @@ def analyze_quant_strategy(data, pair: str, db: Session):
         if action == "WAIT":
             return {"action": "WAIT", "entry": round(close, decimals), "sl": "-", "tp": "-", "reason": reason, "timestamp": 0}
         else:
-            sl_multiplier = 1.8 if "XAG" in pair else 1.5
-            tp_multiplier = 2.5 if "XAG" in pair else 2.0
-            sl_calc = close - (sl_multiplier * atr) if action == "BUY" else close + (sl_multiplier * atr)
-            tp_calc = close + (tp_multiplier * atr) if action == "BUY" else close - (tp_multiplier * atr)
+            # Gold Risk Parameters: 1.5x ATR Stop Loss, 2.0x ATR Take Profit
+            sl_calc = close - (1.5 * atr) if action == "BUY" else close + (1.5 * atr)
+            tp_calc = close + (2.0 * atr) if action == "BUY" else close - (2.0 * atr)
             
             signal = {
                 "action": action, "entry": round(close, decimals), "sl": round(sl_calc, decimals),
@@ -146,13 +136,15 @@ async def background_bot_loop():
         try:
             for pair in PAIRS:
                 df = await asyncio.to_thread(fetch_market_data, pair)
-                signal = analyze_quant_strategy(df, pair, db)
+                signal = analyze_gold_master_strategy(df, pair, db)
                 LATEST_SIGNALS[pair] = signal
         except Exception as loop_error:
             for pair in PAIRS:
                 LATEST_SIGNALS[pair] = {"action": "WAIT", "reason": f"Loop Crash: {str(loop_error)}", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
         finally:
             db.close()
+            
+        # Scan frequency set to 60 seconds
         await asyncio.sleep(60)
 
 @app.on_event("startup")
@@ -160,7 +152,8 @@ async def startup_event():
     asyncio.create_task(background_bot_loop())
 
 @app.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request): return templates.TemplateResponse(request=request, name="index.html")
+async def dashboard(request: Request): 
+    return templates.TemplateResponse(request=request, name="index.html")
 
 @app.get("/journal", response_class=HTMLResponse)
 async def journal_page(request: Request, db: Session = Depends(get_db)):
@@ -169,4 +162,5 @@ async def journal_page(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(request=request, name="journal.html", context={"trades": trades})
 
 @app.get("/api/signals")
-async def get_signals(): return LATEST_SIGNALS
+async def get_signals(): 
+    return LATEST_SIGNALS
