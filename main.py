@@ -16,19 +16,21 @@ templates = Jinja2Templates(directory="templates")
 
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "YOUR_API_KEY_HERE")
 
+# Configured for precious metals trading portfolio
 PAIRS = [
     "XAU/USD",
-    "EUR/USD",
+    # "EUR/USD",  # Commented out per structural updates
+    "XAG/USD",
 ]
 
-# GLOBAL STATE: Stores the background bot's latest findings
-LATEST_SIGNALS = {pair: {"action": "WAIT", "reason": "Booting up...", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0} for pair in PAIRS}
+# GLOBAL SERVER STATE
+LATEST_SIGNALS = {pair: {"action": "WAIT", "reason": "Initializing server matrix...", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0} for pair in PAIRS}
 
 last_logged_signal = {} 
 signal_timestamps = {}
 
 def fetch_market_data(symbol: str):
-    """Fetches high-quality 5-minute candles."""
+    """Fetches clean 5-minute intervals optimizing candle lookbacks for structural indicators."""
     url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=5min&outputsize=150&apikey={TWELVEDATA_API_KEY}"
     try:
         response = requests.get(url, timeout=10).json()
@@ -42,54 +44,92 @@ def fetch_market_data(symbol: str):
     except:
         return None
 
-def analyze_dynamic_strategy(data, pair: str, db: Session):
+def analyze_quant_strategy(data, pair: str, db: Session):
     global last_logged_signal, signal_timestamps
 
-    decimals = 2 if "XAU" in pair else 5
+    # Precision pricing calibration for Precious Metals
+    if "XAG" in pair:
+        decimals = 3
+    elif "XAU" in pair:
+        decimals = 2
+    else:
+        decimals = 5
 
     if data is None or len(data) < 60:
-        return {"action": "WAIT", "reason": "Wait: Gathering market data", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
+        return {"action": "WAIT", "reason": "Wait: Synchronizing quantitative matrix", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
 
     df = data
     close = float(df.iloc[-2]["close"])
     candle_time = df.iloc[-2]["datetime"]
 
-    # 1. TIME SAFETY FILTER (8:30 PM Cutoff)
+    # 1. TIME LOCK FILTER (8:30 PM Cutoff)
     current_time = datetime.utcnow() + timedelta(hours=4)
     if (current_time.hour == 20 and current_time.minute >= 30) or current_time.hour > 20:
         return {"action": "WAIT", "reason": "Paused: Time limit (8:30 PM)", "entry": round(close, decimals), "sl": "-", "tp": "-", "timestamp": 0}
 
-    # 2. DYNAMIC INDICATORS
-    ema9 = float(df.ta.ema(length=9).iloc[-2])
-    ema21 = float(df.ta.ema(length=21).iloc[-2])
+    # 2. ADVANCED QUANTITATIVE INDICATORS
+    # Intraday Structural Trend Line
     ema50 = float(df.ta.ema(length=50).iloc[-2]) 
     
+    # Momentum Convergence / Divergence Engine
+    macd_df = df.ta.macd(fast=12, slow=26, signal=9)
+    macd_line = float(macd_df.iloc[-2].iloc[0])   # MACD Line
+    macd_signal = float(macd_df.iloc[-2].iloc[2]) # Signal Line
+    
+    # Relative Strength & Multi-Period Volatility
     rsi = float(df.ta.rsi(length=14).iloc[-2])
     atr = float(df.ta.atr(length=14).iloc[-2])
 
-    # 3. ALGORITHMIC LOGIC
+    # Volatility Bandwidth & Squeeze Analytics
+    bb_std = 2.5 if "XAU" in pair or "XAG" in pair else 2.0
+    bb = df.ta.bbands(length=20, std=bb_std)
+    lower_band = float(bb.iloc[-2].iloc[0])
+    upper_band = float(bb.iloc[-2].iloc[2])
+    
+    # Bandwidth calculation to detect low-volatility traps
+    bandwidth = (upper_band - lower_band) / ema50
+    historical_bandwidth_avg = float((bb.iloc[:, 2] - bb.iloc[:, 0]).rolling(window=50).mean().iloc[-2] / ema50)
+
+    # 3. ALGORITHMIC EXECUTION MATRIX
     action = "WAIT"
-    reason = "Wait: Scanning for alignment..."
+    reason = "Wait: Tracking structural alignment..."
 
-    if close > ema50 and ema9 > ema21:
-        if 50 < rsi < 68:
+    # Volatility Squeeze Trap Safeguard
+    if bandwidth < (historical_bandwidth_avg * 0.65):
+        reason = "Wait: Squeeze detected (Insufficient volume/volatility)"
+    
+    # BULLISH CONFLUENCE BREAKOUT ENGINE
+    elif close > ema50 and macd_line > macd_signal:
+        if 50 < rsi < 68 and close < upper_band:
             action = "BUY"
-            reason = "Intraday Bullish Wave Confirmed"
-        elif rsi >= 68: reason = "Wait: BUY blocked (Market overbought)"
-    elif close < ema50 and ema9 < ema21:
-        if 32 < rsi < 50:
+            reason = "Institutional Momentum Breakout Confirmed"
+        elif rsi >= 68: 
+            reason = "Wait: BUY Overextended (Exhaustion Risk)"
+        elif close >= upper_band:
+            reason = "Wait: Price hitting structural overhead ceiling"
+            
+    # BEARISH CONFLUENCE BREAKOUT ENGINE
+    elif close < ema50 and macd_line < macd_signal:
+        if 32 < rsi < 50 and close > lower_band:
             action = "SELL"
-            reason = "Intraday Bearish Wave Confirmed"
-        elif rsi <= 32: reason = "Wait: SELL blocked (Market oversold)"
+            reason = "Institutional Velocity Distribution Confirmed"
+        elif rsi <= 32: 
+            reason = "Wait: SELL Overextended (Floor Bounce Risk)"
+        elif close <= lower_band:
+            reason = "Wait: Price hitting structural support floor"
+            
+    # TRANSITION/CONSOLIDATION PHASES
     else:
-        if ema9 > ema21 and close < ema50: reason = "Wait: Minor upward correction"
-        elif ema9 < ema21 and close > ema50: reason = "Wait: Minor downward pullback"
-        else: reason = "Wait: Market consolidating flat"
+        if close > ema50 and macd_line < macd_signal:
+            reason = "Wait: Bullish structure losing momentum acceleration"
+        elif close < ema50 and macd_line > macd_signal:
+            reason = "Wait: Bearish structure losing velocity decay"
+        else:
+            reason = "Wait: Market consolidating flat"
 
-    # 4. SIGNAL PACKAGING & TIMESTAMPING
+    # 4. VOLATILITY ENGINE PACKAGING & STORAGE
     signal_id = f"{pair}_{str(candle_time)}_{action}"
     
-    # Only assign a new timestamp if this is a brand new signal
     if signal_id not in signal_timestamps and action != "WAIT": 
         signal_timestamps[signal_id] = int(time.time())
 
@@ -99,8 +139,12 @@ def analyze_dynamic_strategy(data, pair: str, db: Session):
             "sl": "-", "tp": "-", "reason": reason, "timestamp": 0
         }
     else:
-        sl_calc = close - (1.5 * atr) if action == "BUY" else close + (1.5 * atr)
-        tp_calc = close + (2.0 * atr) if action == "BUY" else close - (2.0 * atr)
+        # Metals require precision ATR spacing to protect capital from stop hunts
+        sl_multiplier = 1.8 if "XAG" in pair else 1.5
+        tp_multiplier = 2.5 if "XAG" in pair else 2.0
+        
+        sl_calc = close - (sl_multiplier * atr) if action == "BUY" else close + (sl_multiplier * atr)
+        tp_calc = close + (tp_multiplier * atr) if action == "BUY" else close - (tp_multiplier * atr)
         
         signal = {
             "action": action, 
@@ -111,7 +155,7 @@ def analyze_dynamic_strategy(data, pair: str, db: Session):
             "timestamp": signal_timestamps[signal_id]
         }
 
-        # Safe DB Journal Logging in Background
+        # Safe DB Asynchronous Mirroring
         try:
             if last_logged_signal.get(pair) != str(candle_time):
                 db.add(TradeJournal(pair=pair, action=action, entry_price=signal["entry"], 
@@ -123,32 +167,29 @@ def analyze_dynamic_strategy(data, pair: str, db: Session):
             
     return signal
 
-# --- BACKGROUND TASK ENGINE ---
+# --- ASYNC BACKGROUND SEED ENGINE ---
 async def background_bot_loop():
-    """Runs infinitely in the background, logging signals even when the dashboard is closed."""
+    """Independent infinite async thread to scan precious metals portfolio continuously."""
     while True:
-        db = SessionLocal() # Open a database connection for the background task
+        db = SessionLocal()
         try:
             for pair in PAIRS:
-                # Use to_thread to prevent the API request from freezing the web server
                 df = await asyncio.to_thread(fetch_market_data, pair)
                 if df is not None:
-                    signal = analyze_dynamic_strategy(df, pair, db)
-                    LATEST_SIGNALS[pair] = signal # Update the global state silently
+                    signal = analyze_quant_strategy(df, pair, db)
+                    LATEST_SIGNALS[pair] = signal
         except Exception as e:
-            print(f"Background Bot Error: {e}")
+            print(f"Quant Loop Operational Alert: {e}")
         finally:
             db.close()
-        
-        # Wait 60 seconds before scanning the market again
         await asyncio.sleep(60)
 
 @app.on_event("startup")
 async def startup_event():
-    """Starts the background bot automatically when Railway boots the server."""
+    """Launches the independent algorithmic daemon upon server execution."""
     asyncio.create_task(background_bot_loop())
 
-# --- FASTAPI ROUTES ---
+# --- ENDPOINTS ---
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
     return templates.TemplateResponse(request=request, name="index.html")
@@ -163,5 +204,4 @@ async def journal_page(request: Request, db: Session = Depends(get_db)):
 
 @app.get("/api/signals")
 async def get_signals():
-    # Instantly returns the cached signals from the background loop
     return LATEST_SIGNALS
