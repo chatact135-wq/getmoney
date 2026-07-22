@@ -16,7 +16,7 @@ templates = Jinja2Templates(directory="templates")
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "YOUR_API_KEY_HERE")
 
 PAIRS = ["XAU/USD"]
-LATEST_SIGNALS = {pair: {"action": "WAIT", "reason": "Initializing VWAP Statistical Engine...", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0} for pair in PAIRS}
+LATEST_SIGNALS = {pair: {"action": "WAIT", "reason": "Initializing S&R Breakout Engine...", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0} for pair in PAIRS}
 last_logged_signal = {}
 signal_timestamps = {}
 
@@ -32,7 +32,6 @@ def fetch_market_data(symbol: str):
         df = pd.DataFrame(response["values"])
         df["datetime"] = pd.to_datetime(df["datetime"])
         
-        # FIX: Ensure volume column exists even if TwelveData omits it for XAU/USD
         if "volume" not in df.columns or df["volume"].isnull().all():
             df["volume"] = 1.0
             
@@ -44,16 +43,15 @@ def fetch_market_data(symbol: str):
     except Exception as e:
         return f"Fetch Exception: {str(e)}"
 
-def analyze_vwap_mean_reversion(data, pair: str, db: Session):
+def analyze_sr_breakout(data, pair: str, db: Session):
     global last_logged_signal, signal_timestamps
     decimals = 2
 
     if isinstance(data, str):
-        return {"action": "WAIT", "reason": data, "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
+        return {"action": "WAIT", "reason": data, "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
 
-    # Require 60 candles to calculate a stable 50-period rolling VWAP
-    if data is None or len(data) < 60:
-        return {"action": "WAIT", "reason": "Wait: Warming up VWAP array...", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
+    if data is None or len(data) < 30:
+        return {"action": "WAIT", "reason": "Wait: Building S&R price history...", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
 
     try:
         df = data
@@ -63,37 +61,29 @@ def analyze_vwap_mean_reversion(data, pair: str, db: Session):
         # 1. TIME LOCK FILTER (8:30 PM UAE)
         current_time = datetime.utcnow() + timedelta(hours=4)
         if (current_time.hour == 20 and current_time.minute >= 30) or current_time.hour > 20:
-            return {"action": "WAIT", "reason": "Paused: Time limit (8:30 PM UAE)", "entry": round(close, decimals), "sl": "-", "tp": "-", "timestamp": 0}
+            return {"action": "WAIT", "reason": "Paused: Time limit (8:30 PM UAE)", "entry": round(close, decimals), "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
 
-        # 2. VWAP & STANDARD DEVIATION CALCULATIONS (50-Period)
-        tp = (df['high'] + df['low'] + df['close']) / 3
+        # 2. DYNAMIC SUPPORT & RESISTANCE ENGINE (20-Period Window)
+        # Shifted by 1 candle to prevent lookahead bias
+        df['resistance'] = df['high'].shift(1).rolling(window=20).max()
+        df['support'] = df['low'].shift(1).rolling(window=20).min()
         
-        rolling_vol = df['volume'].rolling(window=50).sum()
-        rolling_tp_vol = (tp * df['volume']).rolling(window=50).sum()
-        
-        df['rolling_vwap'] = rolling_tp_vol / rolling_vol
-        df['rolling_std'] = tp.rolling(window=50).std()
-        
-        vwap = float(df['rolling_vwap'].iloc[-2])
-        std = float(df['rolling_std'].iloc[-2])
-        
-        # Upper and Lower Statistical Bounds (2.0 Standard Deviations for active triggers)
-        upper_band = vwap + (2.0 * std)
-        lower_band = vwap - (2.0 * std)
+        resistance = float(df['resistance'].iloc[-2])
+        support = float(df['support'].iloc[-2])
 
-        # 3. STATISTICAL MEAN REVERSION LOGIC
+        # 3. BREAKOUT EXECUTION LOGIC
         action = "WAIT"
-        reason = "Wait: Price within statistical equilibrium."
+        reason = f"Ranging between Support (${round(support, decimals)}) & Resistance (${round(resistance, decimals)})"
 
-        # SELL TRIGGER: Price stretched above upper band
-        if close > upper_band:
-            action = "SELL"
-            reason = "VWAP Over-extension (+2.0 SD). Snapping Down."
-
-        # BUY TRIGGER: Price stretched below lower band
-        elif close < lower_band:
+        # BUY: Close breaks strictly above the 20-period Resistance ceiling
+        if close > resistance:
             action = "BUY"
-            reason = "VWAP Over-extension (-2.0 SD). Snapping Up."
+            reason = f"Resistance Breakout! Price crossed above ${round(resistance, decimals)}"
+
+        # SELL: Close breaks strictly below the 20-period Support floor
+        elif close < support:
+            action = "SELL"
+            reason = f"Support Breakdown! Price dropped below ${round(support, decimals)}"
 
         # 4. SIGNAL PACKAGING & DB LOGGING
         signal_id = f"{pair}_{str(candle_time)}_{action}"
@@ -101,15 +91,22 @@ def analyze_vwap_mean_reversion(data, pair: str, db: Session):
             signal_timestamps[signal_id] = int(time.time())
 
         if action == "WAIT":
-            return {"action": "WAIT", "entry": round(close, decimals), "sl": "-", "tp": "-", "reason": reason, "timestamp": 0}
+            return {
+                "action": "WAIT", "entry": round(close, decimals), "sl": "-", "tp": "-", 
+                "support": round(support, decimals), "resistance": round(resistance, decimals),
+                "reason": reason, "timestamp": 0
+            }
         else:
-            # Fixed Scalp Target: $0.80 Profit (80 pips), $0.40 Risk (40 pips)
-            sl_calc = close - 0.40 if action == "BUY" else close + 0.40
-            tp_calc = close + 0.80 if action == "BUY" else close - 0.80
+            # Risk Management: Dynamic Stops based on recent S&R bounds
+            sl_calc = support if action == "BUY" else resistance
+            # Take Profit set at 1.5x the Distance to Stop Loss
+            risk_distance = abs(close - sl_calc)
+            tp_calc = close + (1.5 * risk_distance) if action == "BUY" else close - (1.5 * risk_distance)
             
             signal = {
                 "action": action, "entry": round(close, decimals), "sl": round(sl_calc, decimals),
-                "tp": round(tp_calc, decimals), "reason": reason, "timestamp": signal_timestamps[signal_id]
+                "tp": round(tp_calc, decimals), "support": round(support, decimals), 
+                "resistance": round(resistance, decimals), "reason": reason, "timestamp": signal_timestamps[signal_id]
             }
 
             try:
@@ -122,7 +119,7 @@ def analyze_vwap_mean_reversion(data, pair: str, db: Session):
             return signal
 
     except Exception as calc_error:
-        return {"action": "WAIT", "reason": f"VWAP Math Error: {str(calc_error)}", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
+        return {"action": "WAIT", "reason": f"S&R Math Error: {str(calc_error)}", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
 
 async def background_bot_loop():
     while True:
@@ -130,11 +127,11 @@ async def background_bot_loop():
         try:
             for pair in PAIRS:
                 df = await asyncio.to_thread(fetch_market_data, pair)
-                signal = analyze_vwap_mean_reversion(df, pair, db)
+                signal = analyze_sr_breakout(df, pair, db)
                 LATEST_SIGNALS[pair] = signal
         except Exception as loop_error:
             for pair in PAIRS:
-                LATEST_SIGNALS[pair] = {"action": "WAIT", "reason": f"Engine Fault: {str(loop_error)}", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
+                LATEST_SIGNALS[pair] = {"action": "WAIT", "reason": f"Engine Fault: {str(loop_error)}", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
         finally:
             db.close()
         await asyncio.sleep(60)
