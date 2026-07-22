@@ -3,7 +3,6 @@ import time
 import asyncio
 import requests
 import pandas as pd
-import pandas_ta as ta
 from datetime import datetime, timedelta
 from fastapi import FastAPI, Request, Depends
 from fastapi.responses import HTMLResponse
@@ -17,12 +16,11 @@ templates = Jinja2Templates(directory="templates")
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "YOUR_API_KEY_HERE")
 
 PAIRS = ["XAU/USD"]
-LATEST_SIGNALS = {pair: {"action": "WAIT", "reason": "Initializing Institutional SMC Core...", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0} for pair in PAIRS}
+LATEST_SIGNALS = {pair: {"action": "WAIT", "reason": "Initializing VWAP Statistical Engine...", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0} for pair in PAIRS}
 last_logged_signal = {}
 signal_timestamps = {}
 
 def fetch_market_data(symbol: str):
-    """Fetches full market data including volume for Profile rendering."""
     url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=5min&outputsize=150&apikey={TWELVEDATA_API_KEY}"
     try:
         response = requests.get(url, timeout=10).json()
@@ -40,16 +38,16 @@ def fetch_market_data(symbol: str):
     except Exception as e:
         return f"Fetch Exception: {str(e)}"
 
-def analyze_smc_volume_profile(data, pair: str, db: Session):
+def analyze_vwap_mean_reversion(data, pair: str, db: Session):
     global last_logged_signal, signal_timestamps
     decimals = 2
 
     if isinstance(data, str):
         return {"action": "WAIT", "reason": data, "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
 
-    # Require at least 120 candles to build a statistically valid Volume Profile
-    if data is None or len(data) < 120:
-        return {"action": "WAIT", "reason": "Wait: Gathering Volume Profile Data", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
+    # Require 60 candles to calculate a stable 50-period rolling VWAP
+    if data is None or len(data) < 60:
+        return {"action": "WAIT", "reason": "Wait: Warming up VWAP array...", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
 
     try:
         df = data
@@ -61,64 +59,38 @@ def analyze_smc_volume_profile(data, pair: str, db: Session):
         if (current_time.hour == 20 and current_time.minute >= 30) or current_time.hour > 20:
             return {"action": "WAIT", "reason": "Paused: Time limit (8:30 PM UAE)", "entry": round(close, decimals), "sl": "-", "tp": "-", "timestamp": 0}
 
-        # 2. MACRO TREND & RISK ENGINE
-        atr = float(df.ta.atr(length=14).iloc[-2])
-        ema50 = float(df.ta.ema(length=50).iloc[-2])
-
-        # 3. VOLUME PROFILE ENGINE (Mapping the Institutional Footprints)
-        vp_df = df.iloc[-101:-1].copy()
-        # Round Gold prices to the nearest 0.50 to build density bins
-        vp_df['price_bin'] = (vp_df['close'] * 2).round() / 2  
-        volume_profile = vp_df.groupby('price_bin')['volume'].sum()
+        # 2. VWAP & STANDARD DEVIATION CALCULATIONS (50-Period)
+        # Typical Price = (High + Low + Close) / 3
+        tp = (df['high'] + df['low'] + df['close']) / 3
         
-        if volume_profile.empty:
-            return {"action": "WAIT", "reason": "Wait: Insufficient Volume Data", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
-            
-        # Isolate the top 5 High Volume Nodes (HVNs) where whales accumulated
-        hvns = volume_profile.nlargest(5).index.tolist() 
-
-        # 4. SMART MONEY CONCEPTS (SMC) - Fair Value Gap (FVG) Detector
-        recent_df = df.iloc[-15:-1].copy()
-        bullish_fvg = None
-        bearish_fvg = None
+        rolling_vol = df['volume'].rolling(window=50).sum()
+        rolling_tp_vol = (tp * df['volume']).rolling(window=50).sum()
         
-        for i in range(2, len(recent_df)):
-            # Bullish FVG Calculation: True gap between low of current and high of (i-2)
-            if recent_df.iloc[i]['low'] > recent_df.iloc[i-2]['high']:
-                bullish_fvg = (recent_df.iloc[i-2]['high'] + recent_df.iloc[i]['low']) / 2
-                
-            # Bearish FVG Calculation: True gap between high of current and low of (i-2)
-            if recent_df.iloc[i]['high'] < recent_df.iloc[i-2]['low']:
-                bearish_fvg = (recent_df.iloc[i-2]['low'] + recent_df.iloc[i]['high']) / 2
+        df['rolling_vwap'] = rolling_tp_vol / rolling_vol
+        df['rolling_std'] = tp.rolling(window=50).std()
+        
+        vwap = float(df['rolling_vwap'].iloc[-2])
+        std = float(df['rolling_std'].iloc[-2])
+        
+        # Upper and Lower Statistical Bounds (2.5 Standard Deviations)
+        upper_band = vwap + (2.5 * std)
+        lower_band = vwap - (2.5 * std)
 
-        # 5. EXECUTION MATRIX (SMC & Volume Confluence)
+        # 3. STATISTICAL MEAN REVERSION LOGIC
         action = "WAIT"
-        reason = "Wait: Hunting FVG & Liquidity Zones..."
-        
-        # Proximity tolerance for a successful "Tap" into the zone
-        tolerance = 1.0  
+        reason = "Wait: Price within statistical equilibrium."
 
-        # BUY RULES: Uptrend + Bullish FVG Backed by Heavy Volume
-        if close > ema50 and bullish_fvg:
-            for hvn in hvns:
-                # FVG must physically overlap an institutional High Volume Node
-                if abs(bullish_fvg - hvn) <= 2.5: 
-                    # Current price must tap precisely into the FVG zone
-                    if abs(close - bullish_fvg) <= tolerance: 
-                        action = "BUY"
-                        reason = "SMC Sniper: Bullish FVG + High Volume Node Tap"
-                        break
+        # SELL TRIGGER: Price stretched far above the upper band
+        if close > upper_band:
+            action = "SELL"
+            reason = "VWAP Over-extension (+2.5 SD). Snapping Down."
 
-        # SELL RULES: Downtrend + Bearish FVG Backed by Heavy Volume
-        elif close < ema50 and bearish_fvg:
-            for hvn in hvns:
-                if abs(bearish_fvg - hvn) <= 2.5:
-                    if abs(close - bearish_fvg) <= tolerance:
-                        action = "SELL"
-                        reason = "SMC Sniper: Bearish FVG + High Volume Node Tap"
-                        break
+        # BUY TRIGGER: Price stretched far below the lower band
+        elif close < lower_band:
+            action = "BUY"
+            reason = "VWAP Over-extension (-2.5 SD). Snapping Up."
 
-        # 6. ASYNCHRONOUS JOURNALING
+        # 4. SIGNAL PACKAGING & DB LOGGING
         signal_id = f"{pair}_{str(candle_time)}_{action}"
         if signal_id not in signal_timestamps and action != "WAIT": 
             signal_timestamps[signal_id] = int(time.time())
@@ -126,9 +98,9 @@ def analyze_smc_volume_profile(data, pair: str, db: Session):
         if action == "WAIT":
             return {"action": "WAIT", "entry": round(close, decimals), "sl": "-", "tp": "-", "reason": reason, "timestamp": 0}
         else:
-            # Tight Institutional Stops (1.0 ATR) & Asymmetrical Targets (2.5 ATR)
-            sl_calc = close - (1.0 * atr) if action == "BUY" else close + (1.0 * atr)
-            tp_calc = close + (2.5 * atr) if action == "BUY" else close - (2.5 * atr)
+            # Fixed Statistical Scalp Targeting: $0.80 Profit (80 pips), $0.40 Risk (40 pips)
+            sl_calc = close - 0.40 if action == "BUY" else close + 0.40
+            tp_calc = close + 0.80 if action == "BUY" else close - 0.80
             
             signal = {
                 "action": action, "entry": round(close, decimals), "sl": round(sl_calc, decimals),
@@ -145,7 +117,7 @@ def analyze_smc_volume_profile(data, pair: str, db: Session):
             return signal
 
     except Exception as calc_error:
-        return {"action": "WAIT", "reason": f"SMC Math Error: {str(calc_error)}", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
+        return {"action": "WAIT", "reason": f"VWAP Math Error: {str(calc_error)}", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
 
 async def background_bot_loop():
     while True:
@@ -153,7 +125,7 @@ async def background_bot_loop():
         try:
             for pair in PAIRS:
                 df = await asyncio.to_thread(fetch_market_data, pair)
-                signal = analyze_smc_volume_profile(df, pair, db)
+                signal = analyze_vwap_mean_reversion(df, pair, db)
                 LATEST_SIGNALS[pair] = signal
         except Exception as loop_error:
             for pair in PAIRS:
