@@ -31,8 +31,14 @@ def fetch_market_data(symbol: str):
         
         df = pd.DataFrame(response["values"])
         df["datetime"] = pd.to_datetime(df["datetime"])
+        
+        # FIX: Ensure volume column exists even if TwelveData omits it for XAU/USD
+        if "volume" not in df.columns or df["volume"].isnull().all():
+            df["volume"] = 1.0
+            
         for col in ["open", "high", "low", "close", "volume"]: 
             df[col] = df[col].astype(float)
+            
         df = df.iloc[::-1].reset_index(drop=True)
         return df
     except Exception as e:
@@ -60,7 +66,6 @@ def analyze_vwap_mean_reversion(data, pair: str, db: Session):
             return {"action": "WAIT", "reason": "Paused: Time limit (8:30 PM UAE)", "entry": round(close, decimals), "sl": "-", "tp": "-", "timestamp": 0}
 
         # 2. VWAP & STANDARD DEVIATION CALCULATIONS (50-Period)
-        # Typical Price = (High + Low + Close) / 3
         tp = (df['high'] + df['low'] + df['close']) / 3
         
         rolling_vol = df['volume'].rolling(window=50).sum()
@@ -72,23 +77,23 @@ def analyze_vwap_mean_reversion(data, pair: str, db: Session):
         vwap = float(df['rolling_vwap'].iloc[-2])
         std = float(df['rolling_std'].iloc[-2])
         
-        # Upper and Lower Statistical Bounds (2.5 Standard Deviations)
-        upper_band = vwap + (2.5 * std)
-        lower_band = vwap - (2.5 * std)
+        # Upper and Lower Statistical Bounds (2.0 Standard Deviations for active triggers)
+        upper_band = vwap + (2.0 * std)
+        lower_band = vwap - (2.0 * std)
 
         # 3. STATISTICAL MEAN REVERSION LOGIC
         action = "WAIT"
         reason = "Wait: Price within statistical equilibrium."
 
-        # SELL TRIGGER: Price stretched far above the upper band
+        # SELL TRIGGER: Price stretched above upper band
         if close > upper_band:
             action = "SELL"
-            reason = "VWAP Over-extension (+2.5 SD). Snapping Down."
+            reason = "VWAP Over-extension (+2.0 SD). Snapping Down."
 
-        # BUY TRIGGER: Price stretched far below the lower band
+        # BUY TRIGGER: Price stretched below lower band
         elif close < lower_band:
             action = "BUY"
-            reason = "VWAP Over-extension (-2.5 SD). Snapping Up."
+            reason = "VWAP Over-extension (-2.0 SD). Snapping Up."
 
         # 4. SIGNAL PACKAGING & DB LOGGING
         signal_id = f"{pair}_{str(candle_time)}_{action}"
@@ -98,7 +103,7 @@ def analyze_vwap_mean_reversion(data, pair: str, db: Session):
         if action == "WAIT":
             return {"action": "WAIT", "entry": round(close, decimals), "sl": "-", "tp": "-", "reason": reason, "timestamp": 0}
         else:
-            # Fixed Statistical Scalp Targeting: $0.80 Profit (80 pips), $0.40 Risk (40 pips)
+            # Fixed Scalp Target: $0.80 Profit (80 pips), $0.40 Risk (40 pips)
             sl_calc = close - 0.40 if action == "BUY" else close + 0.40
             tp_calc = close + 0.80 if action == "BUY" else close - 0.80
             
