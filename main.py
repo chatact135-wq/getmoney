@@ -16,12 +16,12 @@ templates = Jinja2Templates(directory="templates")
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "YOUR_API_KEY_HERE")
 
 PAIRS = ["XAU/USD"]
-LATEST_SIGNALS = {pair: {"action": "WAIT", "reason": "Initializing S&R Breakout Engine...", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0} for pair in PAIRS}
+LATEST_SIGNALS = {pair: {"action": "WAIT", "reason": "Initializing 15M (55-Period) S&R Breakout Engine...", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0} for pair in PAIRS}
 last_logged_signal = {}
 signal_timestamps = {}
 
 def fetch_market_data(symbol: str):
-    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=5min&outputsize=150&apikey={TWELVEDATA_API_KEY}"
+    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=15min&outputsize=150&apikey={TWELVEDATA_API_KEY}"
     try:
         response = requests.get(url, timeout=10).json()
         if "status" in response and response["status"] == "error":
@@ -50,8 +50,9 @@ def analyze_sr_breakout(data, pair: str, db: Session):
     if isinstance(data, str):
         return {"action": "WAIT", "reason": data, "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
 
-    if data is None or len(data) < 30:
-        return {"action": "WAIT", "reason": "Wait: Building S&R price history...", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
+    # Require at least 60 candles to safely calculate a 55-period window
+    if data is None or len(data) < 60:
+        return {"action": "WAIT", "reason": "Wait: Building 15M S&R price history (55 periods)...", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
 
     try:
         df = data
@@ -63,27 +64,26 @@ def analyze_sr_breakout(data, pair: str, db: Session):
         if (current_time.hour == 20 and current_time.minute >= 30) or current_time.hour > 20:
             return {"action": "WAIT", "reason": "Paused: Time limit (8:30 PM UAE)", "entry": round(close, decimals), "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
 
-        # 2. DYNAMIC SUPPORT & RESISTANCE ENGINE (20-Period Window)
-        # Shifted by 1 candle to prevent lookahead bias
-        df['resistance'] = df['high'].shift(1).rolling(window=20).max()
-        df['support'] = df['low'].shift(1).rolling(window=20).min()
+        # 2. DYNAMIC SUPPORT & RESISTANCE ENGINE (55-Period Window on 15M = ~13.75 Hours)
+        df['resistance'] = df['high'].shift(1).rolling(window=55).max()
+        df['support'] = df['low'].shift(1).rolling(window=55).min()
         
         resistance = float(df['resistance'].iloc[-2])
         support = float(df['support'].iloc[-2])
 
         # 3. BREAKOUT EXECUTION LOGIC
         action = "WAIT"
-        reason = f"Ranging between Support (${round(support, decimals)}) & Resistance (${round(resistance, decimals)})"
+        reason = f"15M Range (55 candles): Support (${round(support, decimals)}) & Resistance (${round(resistance, decimals)})"
 
-        # BUY: Close breaks strictly above the 20-period Resistance ceiling
+        # BUY: 15-minute close strictly above 55-period Resistance ceiling
         if close > resistance:
             action = "BUY"
-            reason = f"Resistance Breakout! Price crossed above ${round(resistance, decimals)}"
+            reason = f"15M Macro Breakout! Price closed above Resistance (${round(resistance, decimals)})"
 
-        # SELL: Close breaks strictly below the 20-period Support floor
+        # SELL: 15-minute close strictly below 55-period Support floor
         elif close < support:
             action = "SELL"
-            reason = f"Support Breakdown! Price dropped below ${round(support, decimals)}"
+            reason = f"15M Macro Breakdown! Price closed below Support (${round(support, decimals)})"
 
         # 4. SIGNAL PACKAGING & DB LOGGING
         signal_id = f"{pair}_{str(candle_time)}_{action}"
@@ -97,9 +97,7 @@ def analyze_sr_breakout(data, pair: str, db: Session):
                 "reason": reason, "timestamp": 0
             }
         else:
-            # Risk Management: Dynamic Stops based on recent S&R bounds
             sl_calc = support if action == "BUY" else resistance
-            # Take Profit set at 1.5x the Distance to Stop Loss
             risk_distance = abs(close - sl_calc)
             tp_calc = close + (1.5 * risk_distance) if action == "BUY" else close - (1.5 * risk_distance)
             
