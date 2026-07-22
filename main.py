@@ -16,42 +16,40 @@ templates = Jinja2Templates(directory="templates")
 
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "YOUR_API_KEY_HERE")
 
-# Exclusive focus on Gold
-PAIRS = [
-    "XAU/USD"
-]
-
-LATEST_SIGNALS = {pair: {"action": "WAIT", "reason": "Initializing server matrix...", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0} for pair in PAIRS}
-last_logged_signal = {} 
+PAIRS = ["XAU/USD"]
+LATEST_SIGNALS = {pair: {"action": "WAIT", "reason": "Initializing Institutional SMC Core...", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0} for pair in PAIRS}
+last_logged_signal = {}
 signal_timestamps = {}
 
 def fetch_market_data(symbol: str):
+    """Fetches full market data including volume for Profile rendering."""
     url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=5min&outputsize=150&apikey={TWELVEDATA_API_KEY}"
     try:
         response = requests.get(url, timeout=10).json()
         if "status" in response and response["status"] == "error":
-            return f"API Error: {response.get('message', 'Unknown API issue')}"
+            return f"API Error: {response.get('message', 'Unknown')}"
         if "values" not in response:
-            return "API Error: No data returned. Check API Key or limit."
+            return "API Error: No data returned."
         
         df = pd.DataFrame(response["values"])
         df["datetime"] = pd.to_datetime(df["datetime"])
-        for col in ["open", "high", "low", "close"]: df[col] = df[col].astype(float)
+        for col in ["open", "high", "low", "close", "volume"]: 
+            df[col] = df[col].astype(float)
         df = df.iloc[::-1].reset_index(drop=True)
         return df
     except Exception as e:
         return f"Fetch Exception: {str(e)}"
 
-def analyze_gold_master_strategy(data, pair: str, db: Session):
+def analyze_smc_volume_profile(data, pair: str, db: Session):
     global last_logged_signal, signal_timestamps
     decimals = 2
 
-    # Error handling from fetch
     if isinstance(data, str):
         return {"action": "WAIT", "reason": data, "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
 
-    if data is None or len(data) < 60:
-        return {"action": "WAIT", "reason": "Wait: Insufficient candles fetched", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
+    # Require at least 120 candles to build a statistically valid Volume Profile
+    if data is None or len(data) < 120:
+        return {"action": "WAIT", "reason": "Wait: Gathering Volume Profile Data", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
 
     try:
         df = data
@@ -63,45 +61,64 @@ def analyze_gold_master_strategy(data, pair: str, db: Session):
         if (current_time.hour == 20 and current_time.minute >= 30) or current_time.hour > 20:
             return {"action": "WAIT", "reason": "Paused: Time limit (8:30 PM UAE)", "entry": round(close, decimals), "sl": "-", "tp": "-", "timestamp": 0}
 
-        # 2. INDICATORS (Confluence Strategy)
-        ema9 = float(df.ta.ema(length=9).iloc[-2])
-        ema21 = float(df.ta.ema(length=21).iloc[-2])
-        ema50 = float(df.ta.ema(length=50).iloc[-2]) 
-        
-        macd_df = df.ta.macd(fast=12, slow=26, signal=9)
-        macd_line = float(macd_df.iloc[-2].iloc[0])   
-        macd_signal = float(macd_df.iloc[-2].iloc[2]) 
-        
-        rsi = float(df.ta.rsi(length=14).iloc[-2])
+        # 2. MACRO TREND & RISK ENGINE
         atr = float(df.ta.atr(length=14).iloc[-2])
+        ema50 = float(df.ta.ema(length=50).iloc[-2])
 
-        # 3. CONFLUENCE LOGIC
-        action = "WAIT"
-        reason = "Wait: Tracking structural alignment..."
-
-        # BUY LOGIC: Price > 50 EMA | 9 EMA > 21 EMA | MACD Line > Signal
-        if close > ema50 and ema9 > ema21 and macd_line > macd_signal:
-            if 50 < rsi < 70:
-                action = "BUY"
-                reason = "Trend & Momentum Confluence (BUY)"
-            elif rsi >= 70: 
-                reason = "Wait: Overbought (RSI > 70)"
-                
-        # SELL LOGIC: Price < 50 EMA | 9 EMA < 21 EMA | MACD Line < Signal
-        elif close < ema50 and ema9 < ema21 and macd_line < macd_signal:
-            if 30 < rsi < 50:
-                action = "SELL"
-                reason = "Trend & Momentum Confluence (SELL)"
-            elif rsi <= 30: 
-                reason = "Wait: Oversold (RSI < 30)"
+        # 3. VOLUME PROFILE ENGINE (Mapping the Institutional Footprints)
+        vp_df = df.iloc[-101:-1].copy()
+        # Round Gold prices to the nearest 0.50 to build density bins
+        vp_df['price_bin'] = (vp_df['close'] * 2).round() / 2  
+        volume_profile = vp_df.groupby('price_bin')['volume'].sum()
         
-        # Consolidation & Minor Pullbacks
-        else:
-            if close > ema50 and ema9 < ema21: reason = "Wait: Bullish Pullback Phase"
-            elif close < ema50 and ema9 > ema21: reason = "Wait: Bearish Pullback Phase"
-            else: reason = "Wait: Awaiting Momentum Cross"
+        if volume_profile.empty:
+            return {"action": "WAIT", "reason": "Wait: Insufficient Volume Data", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
+            
+        # Isolate the top 5 High Volume Nodes (HVNs) where whales accumulated
+        hvns = volume_profile.nlargest(5).index.tolist() 
 
-        # 4. SIGNAL PACKAGING & DB LOGGING
+        # 4. SMART MONEY CONCEPTS (SMC) - Fair Value Gap (FVG) Detector
+        recent_df = df.iloc[-15:-1].copy()
+        bullish_fvg = None
+        bearish_fvg = None
+        
+        for i in range(2, len(recent_df)):
+            # Bullish FVG Calculation: True gap between low of current and high of (i-2)
+            if recent_df.iloc[i]['low'] > recent_df.iloc[i-2]['high']:
+                bullish_fvg = (recent_df.iloc[i-2]['high'] + recent_df.iloc[i]['low']) / 2
+                
+            # Bearish FVG Calculation: True gap between high of current and low of (i-2)
+            if recent_df.iloc[i]['high'] < recent_df.iloc[i-2]['low']:
+                bearish_fvg = (recent_df.iloc[i-2]['low'] + recent_df.iloc[i]['high']) / 2
+
+        # 5. EXECUTION MATRIX (SMC & Volume Confluence)
+        action = "WAIT"
+        reason = "Wait: Hunting FVG & Liquidity Zones..."
+        
+        # Proximity tolerance for a successful "Tap" into the zone
+        tolerance = 1.0  
+
+        # BUY RULES: Uptrend + Bullish FVG Backed by Heavy Volume
+        if close > ema50 and bullish_fvg:
+            for hvn in hvns:
+                # FVG must physically overlap an institutional High Volume Node
+                if abs(bullish_fvg - hvn) <= 2.5: 
+                    # Current price must tap precisely into the FVG zone
+                    if abs(close - bullish_fvg) <= tolerance: 
+                        action = "BUY"
+                        reason = "SMC Sniper: Bullish FVG + High Volume Node Tap"
+                        break
+
+        # SELL RULES: Downtrend + Bearish FVG Backed by Heavy Volume
+        elif close < ema50 and bearish_fvg:
+            for hvn in hvns:
+                if abs(bearish_fvg - hvn) <= 2.5:
+                    if abs(close - bearish_fvg) <= tolerance:
+                        action = "SELL"
+                        reason = "SMC Sniper: Bearish FVG + High Volume Node Tap"
+                        break
+
+        # 6. ASYNCHRONOUS JOURNALING
         signal_id = f"{pair}_{str(candle_time)}_{action}"
         if signal_id not in signal_timestamps and action != "WAIT": 
             signal_timestamps[signal_id] = int(time.time())
@@ -109,9 +126,9 @@ def analyze_gold_master_strategy(data, pair: str, db: Session):
         if action == "WAIT":
             return {"action": "WAIT", "entry": round(close, decimals), "sl": "-", "tp": "-", "reason": reason, "timestamp": 0}
         else:
-            # Gold Risk Parameters: 1.5x ATR Stop Loss, 2.0x ATR Take Profit
-            sl_calc = close - (1.5 * atr) if action == "BUY" else close + (1.5 * atr)
-            tp_calc = close + (2.0 * atr) if action == "BUY" else close - (2.0 * atr)
+            # Tight Institutional Stops (1.0 ATR) & Asymmetrical Targets (2.5 ATR)
+            sl_calc = close - (1.0 * atr) if action == "BUY" else close + (1.0 * atr)
+            tp_calc = close + (2.5 * atr) if action == "BUY" else close - (2.5 * atr)
             
             signal = {
                 "action": action, "entry": round(close, decimals), "sl": round(sl_calc, decimals),
@@ -128,7 +145,7 @@ def analyze_gold_master_strategy(data, pair: str, db: Session):
             return signal
 
     except Exception as calc_error:
-        return {"action": "WAIT", "reason": f"Calculation Error: {str(calc_error)}", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
+        return {"action": "WAIT", "reason": f"SMC Math Error: {str(calc_error)}", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
 
 async def background_bot_loop():
     while True:
@@ -136,15 +153,13 @@ async def background_bot_loop():
         try:
             for pair in PAIRS:
                 df = await asyncio.to_thread(fetch_market_data, pair)
-                signal = analyze_gold_master_strategy(df, pair, db)
+                signal = analyze_smc_volume_profile(df, pair, db)
                 LATEST_SIGNALS[pair] = signal
         except Exception as loop_error:
             for pair in PAIRS:
-                LATEST_SIGNALS[pair] = {"action": "WAIT", "reason": f"Loop Crash: {str(loop_error)}", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
+                LATEST_SIGNALS[pair] = {"action": "WAIT", "reason": f"Engine Fault: {str(loop_error)}", "entry": "-", "sl": "-", "tp": "-", "timestamp": 0}
         finally:
             db.close()
-            
-        # Scan frequency set to 60 seconds
         await asyncio.sleep(60)
 
 @app.on_event("startup")
