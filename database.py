@@ -1,36 +1,34 @@
 import os
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime
-from sqlalchemy.orm import declarative_base, sessionmaker
-import datetime
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from datetime import datetime, timedelta
 
-# Railway provides the database URL via environment variable. 
-# We default to a local SQLite file for testing on your computer.
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./trading_journal.db")
+# Use Railway persistent volume directory if available, otherwise local folder
+if os.path.exists("/data"):
+    DB_PATH = "sqlite:////data/trade_journal.db"
+else:
+    DB_PATH = "sqlite:///./trade_journal.db"
 
-# Railway's Postgres URL might start with 'postgres://', SQLAlchemy needs 'postgresql://'
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
-
-# Check_same_thread is needed for SQLite, but not for Postgres
-connect_args = {"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
-
-engine = create_engine(DATABASE_URL, connect_args=connect_args)
+engine = create_engine(DB_PATH, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+
+def get_uae_time():
+    return datetime.utcnow() + timedelta(hours=4)
 
 class TradeJournal(Base):
     __tablename__ = "trade_journal"
 
     id = Column(Integer, primary_key=True, index=True)
-    pair = Column(String, index=True)
-    action = Column(String)  # BUY or SELL
+    pair = Column(String, default="XAU/USD")
+    action = Column(String)  # e.g., "BUY (Breakout)" or "SELL (Pullback)"
     entry_price = Column(Float)
     stop_loss = Column(Float)
     take_profit = Column(Float)
     reason = Column(String)
-    timestamp = Column(DateTime, default=datetime.datetime.utcnow)
+    timestamp = Column(DateTime, default=get_uae_time)
 
-# Create the table
 Base.metadata.create_all(bind=engine)
 
 def get_db():
