@@ -16,12 +16,18 @@ templates = Jinja2Templates(directory="templates")
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "YOUR_API_KEY_HERE")
 
 PAIRS = ["XAU/USD"]
-LATEST_SIGNALS = {pair: {"action": "WAIT", "reason": "Initializing Fast Pullback Engine...", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0} for pair in PAIRS}
-last_logged_signal = {}
+# Store signals for BOTH systems
+LATEST_SIGNALS = {
+    pair: {
+        "breakout": {"action": "WAIT", "reason": "Initializing 55-Candle Breakout...", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0},
+        "pullback": {"action": "WAIT", "reason": "Initializing 50/20 EMA Pullback...", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
+    } for pair in PAIRS
+}
+
+last_logged_signal = {"breakout": {}, "pullback": {}}
 signal_timestamps = {}
 
 def fetch_market_data(symbol: str):
-    # Fetch 150 candles (sufficient for 50 EMA and 14 ATR calculations)
     url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=15min&outputsize=150&apikey={TWELVEDATA_API_KEY}"
     try:
         response = requests.get(url, timeout=10).json()
@@ -33,7 +39,6 @@ def fetch_market_data(symbol: str):
         df = pd.DataFrame(response["values"])
         df["datetime"] = pd.to_datetime(df["datetime"])
         
-        # Volume column omitted as TwelveData excludes volume for FX/Metals like XAU/USD
         for col in ["open", "high", "low", "close"]:
             df[col] = df[col].astype(float)
             
@@ -42,35 +47,80 @@ def fetch_market_data(symbol: str):
     except Exception as e:
         return f"Fetch Exception: {str(e)}"
 
-def calculate_indicators(df):
-    """Calculates 50 EMA, 20 EMA, and ATR using pure Pandas for server efficiency."""
-    # 1. Moving Averages for Intraday Trend & Dynamic Pullbacks
+def calculate_pullback_indicators(df):
     df['ema_50'] = df['close'].ewm(span=50, adjust=False).mean()
     df['ema_20'] = df['close'].ewm(span=20, adjust=False).mean()
-    
-    # 2. Average True Range (ATR) for Volatility Risk Management
     high_low = df['high'] - df['low']
     high_close = (df['high'] - df['close'].shift(1)).abs()
     low_close = (df['low'] - df['close'].shift(1)).abs()
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     df['atr'] = tr.ewm(span=14, adjust=False).mean()
-    
     return df
 
-def analyze_hybrid_confluence(data, pair: str, db: Session):
+def analyze_breakout(data, pair: str, db: Session):
     global last_logged_signal, signal_timestamps
     decimals = 2
 
-    if isinstance(data, str):
-        return {"action": "WAIT", "reason": data, "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
-
-    if data is None or len(data) < 60:
-        return {"action": "WAIT", "reason": "Wait: Loading candles...", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
+    if isinstance(data, str) or data is None or len(data) < 60:
+        return {"action": "WAIT", "reason": "Loading candles...", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
 
     try:
-        df = calculate_indicators(data)
+        period = 55
+        df_period = data.iloc[-period-2:-2]
+        highest_high = df_period['high'].max()
+        lowest_low = df_period['low'].min()
         
-        # Last completed 15M candle (-2 index)
+        current = data.iloc[-2]
+        close = float(current["close"])
+        candle_time = current["datetime"]
+        
+        current_time = datetime.utcnow() + timedelta(hours=4)
+        if (current_time.hour == 20 and current_time.minute >= 30) or current_time.hour > 20:
+            return {"action": "WAIT", "reason": "Paused: Time limit (8:30 PM UAE)", "entry": round(close, decimals), "sl": "-", "tp": "-", "support": round(lowest_low, decimals), "resistance": round(highest_high, decimals), "timestamp": 0}
+
+        action = "WAIT"
+        reason = f"Scanning Breakout. Ceiling: ${round(highest_high, decimals)} | Floor: ${round(lowest_low, decimals)}"
+
+        if close > highest_high:
+            action = "BUY"
+            reason = f"Breakout: 14-Hour Ceiling Broken (${round(highest_high, decimals)})"
+        elif close < lowest_low:
+            action = "SELL"
+            reason = f"Breakout: 14-Hour Floor Broken (${round(lowest_low, decimals)})"
+
+        signal_id = f"breakout_{pair}_{str(candle_time)}_{action}"
+        if signal_id not in signal_timestamps and action != "WAIT": 
+            signal_timestamps[signal_id] = int(time.time())
+
+        if action == "WAIT":
+            return {"action": "WAIT", "entry": round(close, decimals), "sl": "-", "tp": "-", "support": round(lowest_low, decimals), "resistance": round(highest_high, decimals), "reason": reason, "timestamp": 0}
+        else:
+            sl_calc = lowest_low if action == "BUY" else highest_high
+            channel_width = highest_high - lowest_low
+            tp_calc = close + (channel_width * 1.5) if action == "BUY" else close - (channel_width * 1.5)
+            
+            signal = {"action": action, "entry": round(close, decimals), "sl": round(sl_calc, decimals), "tp": round(tp_calc, decimals), "support": round(lowest_low, decimals), "resistance": round(highest_high, decimals), "reason": reason, "timestamp": signal_timestamps[signal_id]}
+
+            try:
+                if last_logged_signal["breakout"].get(pair) != str(candle_time):
+                    db.add(TradeJournal(pair=pair, action=f"{action} (Breakout)", entry_price=signal["entry"], stop_loss=signal["sl"], take_profit=signal["tp"], reason=reason))
+                    db.commit()
+                    last_logged_signal["breakout"][pair] = str(candle_time)
+            except:
+                db.rollback() 
+            return signal
+    except Exception as e:
+        return {"action": "WAIT", "reason": f"Math Error: {str(e)}", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
+
+def analyze_pullback(data, pair: str, db: Session):
+    global last_logged_signal, signal_timestamps
+    decimals = 2
+
+    if isinstance(data, str) or data is None or len(data) < 60:
+        return {"action": "WAIT", "reason": "Loading candles...", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
+
+    try:
+        df = calculate_pullback_indicators(data.copy())
         current = df.iloc[-2]
         close = float(current["close"])
         open_price = float(current["open"])
@@ -82,7 +132,6 @@ def analyze_hybrid_confluence(data, pair: str, db: Session):
         ema_20 = float(current["ema_20"])
         atr = float(current["atr"])
 
-        # 1. TIME LOCK FILTER (8:30 PM UAE / 16:30 UTC)
         current_time = datetime.utcnow() + timedelta(hours=4)
         if (current_time.hour == 20 and current_time.minute >= 30) or current_time.hour > 20:
             return {"action": "WAIT", "reason": "Paused: Time limit (8:30 PM UAE)", "entry": round(close, decimals), "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
@@ -90,51 +139,37 @@ def analyze_hybrid_confluence(data, pair: str, db: Session):
         action = "WAIT"
         reason = f"Trend: {'BULLISH' if close > ema_50 else 'BEARISH'} (50 EMA: ${round(ema_50, decimals)}) | 20 EMA: ${round(ema_20, decimals)}"
 
-        # FAST BUY: Above 50 EMA + Touched 20 EMA + Closed Green
         if close > ema_50 and low <= ema_20 and close > open_price:
             action = "BUY"
             reason = f"Fast Pullback: Bullish bounce off 20 EMA (${round(ema_20, decimals)})"
-
-        # FAST SELL: Below 50 EMA + Touched 20 EMA + Closed Red
         elif close < ema_50 and high >= ema_20 and close < open_price:
             action = "SELL"
             reason = f"Fast Pullback: Bearish rejection at 20 EMA (${round(ema_20, decimals)})"
 
-        signal_id = f"{pair}_{str(candle_time)}_{action}"
+        signal_id = f"pullback_{pair}_{str(candle_time)}_{action}"
         if signal_id not in signal_timestamps and action != "WAIT": 
             signal_timestamps[signal_id] = int(time.time())
 
         if action == "WAIT":
-            return {
-                "action": "WAIT", "entry": round(close, decimals), "sl": "-", "tp": "-", 
-                "support": round(ema_50, decimals), "resistance": round(ema_20, decimals),
-                "reason": reason, "timestamp": 0
-            }
+            return {"action": "WAIT", "entry": round(close, decimals), "sl": "-", "tp": "-", "support": round(ema_50, decimals), "resistance": round(ema_20, decimals), "reason": reason, "timestamp": 0}
         else:
-            # Dynamic Risk Management based on ATR
             sl_distance = atr * 1.5
             tp_distance = atr * 2.5
-            
             sl_calc = close - sl_distance if action == "BUY" else close + sl_distance
             tp_calc = close + tp_distance if action == "BUY" else close - tp_distance
             
-            signal = {
-                "action": action, "entry": round(close, decimals), "sl": round(sl_calc, decimals),
-                "tp": round(tp_calc, decimals), "support": round(ema_50, decimals), 
-                "resistance": round(ema_20, decimals), "reason": reason, "timestamp": signal_timestamps[signal_id]
-            }
+            signal = {"action": action, "entry": round(close, decimals), "sl": round(sl_calc, decimals), "tp": round(tp_calc, decimals), "support": round(ema_50, decimals), "resistance": round(ema_20, decimals), "reason": reason, "timestamp": signal_timestamps[signal_id]}
 
             try:
-                if last_logged_signal.get(pair) != str(candle_time):
-                    db.add(TradeJournal(pair=pair, action=action, entry_price=signal["entry"], stop_loss=signal["sl"], take_profit=signal["tp"], reason=reason))
+                if last_logged_signal["pullback"].get(pair) != str(candle_time):
+                    db.add(TradeJournal(pair=pair, action=f"{action} (Pullback)", entry_price=signal["entry"], stop_loss=signal["sl"], take_profit=signal["tp"], reason=reason))
                     db.commit()
-                    last_logged_signal[pair] = str(candle_time)
+                    last_logged_signal["pullback"][pair] = str(candle_time)
             except:
                 db.rollback() 
             return signal
-
-    except Exception as calc_error:
-        return {"action": "WAIT", "reason": f"Math Error: {str(calc_error)}", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
+    except Exception as e:
+        return {"action": "WAIT", "reason": f"Math Error: {str(e)}", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
 
 async def background_bot_loop():
     while True:
@@ -142,11 +177,19 @@ async def background_bot_loop():
         try:
             for pair in PAIRS:
                 df = await asyncio.to_thread(fetch_market_data, pair)
-                signal = analyze_hybrid_confluence(df, pair, db)
-                LATEST_SIGNALS[pair] = signal
+                brk_sig = analyze_breakout(df, pair, db)
+                pul_sig = analyze_pullback(df, pair, db)
+                # Save both signals to the dictionary simultaneously
+                LATEST_SIGNALS[pair] = {
+                    "breakout": brk_sig,
+                    "pullback": pul_sig
+                }
         except Exception as loop_error:
             for pair in PAIRS:
-                LATEST_SIGNALS[pair] = {"action": "WAIT", "reason": f"Engine Fault: {str(loop_error)}", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
+                LATEST_SIGNALS[pair] = {
+                    "breakout": {"action": "WAIT", "reason": f"Engine Fault: {str(loop_error)}", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0},
+                    "pullback": {"action": "WAIT", "reason": f"Engine Fault: {str(loop_error)}", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
+                }
         finally:
             db.close()
         await asyncio.sleep(60)
