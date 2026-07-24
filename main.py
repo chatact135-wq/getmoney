@@ -33,7 +33,8 @@ def fetch_market_data(symbol: str):
         df = pd.DataFrame(response["values"])
         df["datetime"] = pd.to_datetime(df["datetime"])
         
-        for col in ["open", "high", "low", "close", "volume"]:
+        # Volume column omitted as TwelveData excludes volume for FX/Metals like XAU/USD
+        for col in ["open", "high", "low", "close"]:
             df[col] = df[col].astype(float)
             
         df = df.iloc[::-1].reset_index(drop=True)
