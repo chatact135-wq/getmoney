@@ -3,50 +3,191 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Trading Journal</title>
+    <title>XAU/USD Trade Journal</title>
     <style>
-        body { font-family: 'Segoe UI', Arial, sans-serif; background: #0e1118; color: #ffffff; margin: 0; padding: 20px; }
-        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #232d3f; padding-bottom: 15px; margin-bottom: 20px;}
-        .nav-btn { background: #1f293d; border: none; color: white; padding: 10px 20px; cursor: pointer; border-radius: 5px; text-decoration: none;}
-        table { width: 100%; border-collapse: collapse; background: #161c2a; border-radius: 8px; overflow: hidden;}
-        th, td { padding: 12px 15px; text-align: left; border-bottom: 1px solid #232d3f; }
-        th { background-color: #1f293d; color: #a0aec0; }
-        .BUY { color: #00e676; font-weight: bold; }
-        .SELL { color: #ff1744; font-weight: bold; }
+        body {
+            background-color: #0b0f19;
+            color: #ffffff;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 25px;
+        }
+        .header h1 { font-size: 26px; margin: 0; }
+        .back-btn {
+            background-color: #1f2937;
+            color: #f59e0b;
+            padding: 8px 16px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: bold;
+            font-size: 14px;
+        }
+        
+        .filter-card {
+            background-color: #121826;
+            padding: 15px;
+            border-radius: 10px;
+            border: 1px solid #1f2937;
+            margin-bottom: 20px;
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .filter-input, .filter-select {
+            background-color: #0b0f19;
+            border: 1px solid #374151;
+            color: #ffffff;
+            padding: 10px 14px;
+            border-radius: 6px;
+            font-size: 14px;
+            outline: none;
+        }
+        .filter-input { flex-grow: 1; min-width: 200px; }
+        .filter-select { min-width: 140px; cursor: pointer; }
+
+        .table-container {
+            background-color: #121826;
+            border-radius: 12px;
+            border: 1px solid #1f2937;
+            overflow-x: auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+            font-size: 14px;
+        }
+        th, td {
+            padding: 14px 18px;
+            border-bottom: 1px solid #1f2937;
+        }
+        th {
+            background-color: #1a2234;
+            color: #9ca3af;
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 12px;
+            letter-spacing: 0.5px;
+        }
+        tr:hover { background-color: #1a233a; }
+        
+        .badge {
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-weight: bold;
+            font-size: 12px;
+            display: inline-block;
+        }
+        .badge-buy { background-color: rgba(16, 185, 129, 0.2); color: #10b981; }
+        .badge-sell { background-color: rgba(239, 68, 68, 0.2); color: #ef4444; }
+        .time-text { color: #f59e0b; font-size: 13px; font-weight: 500; }
+        .no-data { text-align: center; color: #6b7280; padding: 30px; }
     </style>
 </head>
 <body>
+
     <div class="header">
-        <h2>TRADING JOURNAL</h2>
-        <a href="/" class="nav-btn">Back to Dashboard</a>
+        <h1>Trade Execution Journal</h1>
+        <a href="/" class="back-btn">← Back to Dashboard</a>
     </div>
-    <table>
-        <thead>
-            <tr>
-                <th>Time (UTC)</th>
-                <th>Pair</th>
-                <th>Action</th>
-                <th>Entry Price</th>
-                <th>Take Profit</th>
-                <th>Stop Loss</th>
-                <th>Reason</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for trade in trades %}
-            <tr>
-                <td>{{ trade.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
-                <td>{{ trade.pair }}</td>
-                <td class="{{ trade.action }}">{{ trade.action }}</td>
-                <td>{{ trade.entry_price }}</td>
-                <td style="color:#00e676;">{{ trade.take_profit }}</td>
-                <td style="color:#ff1744;">{{ trade.stop_loss }}</td>
-                <td>{{ trade.reason }}</td>
-            </tr>
-            {% else %}
-            <tr><td colspan="7" style="text-align: center;">No trades recorded yet. The system is waiting for the next signal.</td></tr>
-            {% endfor %}
-        </tbody>
-    </table>
+
+    <!-- Smart Filter Controls -->
+    <div class="filter-card">
+        <input type="text" id="searchInput" class="filter-input" placeholder="Search by reason or keyword..." onkeyup="applyFilters()">
+        
+        <select id="systemFilter" class="filter-select" onchange="applyFilters()">
+            <option value="ALL">All Systems</option>
+            <option value="Breakout">Breakout System</option>
+            <option value="Pullback">EMA Pullback System</option>
+        </select>
+
+        <select id="actionFilter" class="filter-select" onchange="applyFilters()">
+            <option value="ALL">All Actions</option>
+            <option value="BUY">BUY Only</option>
+            <option value="SELL">SELL Only</option>
+        </select>
+    </div>
+
+    <div class="table-container">
+        <table id="journalTable">
+            <thead>
+                <tr>
+                    <th>Time (UAE GST)</th>
+                    <th>Pair</th>
+                    <th>Action / System</th>
+                    <th>Entry</th>
+                    <th>Stop Loss</th>
+                    <th>Take Profit</th>
+                    <th>Algorithmic Reason</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if trades %}
+                    {% for trade in trades %}
+                        <tr class="trade-row" 
+                            data-action="{{ trade.action }}" 
+                            data-reason="{{ trade.reason }}">
+                            <td class="time-text">{{ trade.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                            <td><strong>{{ trade.pair }}</strong></td>
+                            <td>
+                                <span class="badge {% if 'BUY' in trade.action %}badge-buy{% else %}badge-sell{% endif %}">
+                                    {{ trade.action }}
+                                </span>
+                            </td>
+                            <td>${{ "%.2f"|format(trade.entry_price) }}</td>
+                            <td style="color:#ef4444;">${{ "%.2f"|format(trade.stop_loss) }}</td>
+                            <td style="color:#10b981;">${{ "%.2f"|format(trade.take_profit) }}</td>
+                            <td style="color:#9ca3af;">{{ trade.reason }}</td>
+                        </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr id="noDataRow">
+                        <td colspan="7" class="no-data">No recorded trade signals yet.</td>
+                    </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+
+    <script>
+        function applyFilters() {
+            const searchValue = document.getElementById('searchInput').value.toLowerCase();
+            const systemValue = document.getElementById('systemFilter').value;
+            const actionValue = document.getElementById('actionFilter').value;
+            const rows = document.querySelectorAll('.trade-row');
+
+            rows.forEach(row => {
+                const actionText = row.getAttribute('data-action') || '';
+                const reasonText = row.getAttribute('data-reason').toLowerCase() || '';
+
+                // Check Search Input
+                const matchesSearch = reasonText.includes(searchValue) || actionText.toLowerCase().includes(searchValue);
+
+                // Check System Filter
+                let matchesSystem = true;
+                if (systemValue !== 'ALL') {
+                    matchesSystem = actionText.includes(systemValue);
+                }
+
+                // Check Action Filter (BUY vs SELL)
+                let matchesAction = true;
+                if (actionValue !== 'ALL') {
+                    matchesAction = actionText.startsWith(actionValue);
+                }
+
+                if (matchesSearch && matchesSystem && matchesAction) {
+                    row.style.display = '';
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+        }
+    </script>
 </body>
 </html>
