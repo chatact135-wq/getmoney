@@ -16,12 +16,13 @@ templates = Jinja2Templates(directory="templates")
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "YOUR_API_KEY_HERE")
 
 PAIRS = ["XAU/USD"]
-LATEST_SIGNALS = {pair: {"action": "WAIT", "reason": "Initializing 15M (55-Period) S&R Breakout Engine...", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0} for pair in PAIRS}
+LATEST_SIGNALS = {pair: {"action": "WAIT", "reason": "Initializing Hybrid Confluence Engine...", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0} for pair in PAIRS}
 last_logged_signal = {}
 signal_timestamps = {}
 
 def fetch_market_data(symbol: str):
-    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=15min&outputsize=150&apikey={TWELVEDATA_API_KEY}"
+    # CHANGED: outputsize increased to 250 to accurately calculate the 200 EMA
+    url = f"https://api.twelvedata.com/time_series?symbol={symbol}&interval=15min&outputsize=250&apikey={TWELVEDATA_API_KEY}"
     try:
         response = requests.get(url, timeout=10).json()
         if "status" in response and response["status"] == "error":
@@ -32,10 +33,7 @@ def fetch_market_data(symbol: str):
         df = pd.DataFrame(response["values"])
         df["datetime"] = pd.to_datetime(df["datetime"])
         
-        if "volume" not in df.columns or df["volume"].isnull().all():
-            df["volume"] = 1.0
-            
-        for col in ["open", "high", "low", "close", "volume"]: 
+        for col in ["open", "high", "low", "close", "volume"]:
             df[col] = df[col].astype(float)
             
         df = df.iloc[::-1].reset_index(drop=True)
@@ -43,49 +41,86 @@ def fetch_market_data(symbol: str):
     except Exception as e:
         return f"Fetch Exception: {str(e)}"
 
-def analyze_sr_breakout(data, pair: str, db: Session):
+def calculate_indicators(df):
+    """Calculates EMA, RSI, and ATR using pure Pandas for high-speed server execution."""
+    # 1. Exponential Moving Averages (Trend)
+    df['ema_200'] = df['close'].ewm(span=200, adjust=False).mean()
+    df['ema_20'] = df['close'].ewm(span=20, adjust=False).mean()
+    
+    # 2. Relative Strength Index (Momentum)
+    delta = df['close'].diff()
+    gain = delta.where(delta > 0, 0.0).ewm(alpha=1/14, adjust=False).mean()
+    loss = -delta.where(delta < 0, 0.0).ewm(alpha=1/14, adjust=False).mean()
+    rs = gain / loss
+    df['rsi'] = 100 - (100 / (1 + rs))
+    
+    # 3. Average True Range (Volatility/Risk)
+    high_low = df['high'] - df['low']
+    high_close = (df['high'] - df['close'].shift(1)).abs()
+    low_close = (df['low'] - df['close'].shift(1)).abs()
+    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    df['atr'] = tr.ewm(span=14, adjust=False).mean()
+    
+    return df
+
+def analyze_hybrid_confluence(data, pair: str, db: Session):
     global last_logged_signal, signal_timestamps
     decimals = 2
 
     if isinstance(data, str):
         return {"action": "WAIT", "reason": data, "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
 
-    # Require at least 60 candles to safely calculate a 55-period window
-    if data is None or len(data) < 60:
-        return {"action": "WAIT", "reason": "Wait: Building 15M S&R price history (55 periods)...", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
+    # Require at least 200 candles to calculate the 200 EMA properly
+    if data is None or len(data) < 200:
+        return {"action": "WAIT", "reason": "Wait: Building indicator history (Requires 200+ candles)...", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
 
     try:
-        df = data
-        close = float(df.iloc[-2]["close"])
-        candle_time = df.iloc[-2]["datetime"]
+        df = calculate_indicators(data)
+        
+        # Current Closed Candle (-2 because -1 is the active, moving candle)
+        current = df.iloc[-2]
+        # Previous Closed Candle (-3)
+        prev = df.iloc[-3]
+        
+        close = float(current["close"])
+        open_price = float(current["open"])
+        low = float(current["low"])
+        high = float(current["high"])
+        candle_time = current["datetime"]
 
-        # 1. TIME LOCK FILTER (8:30 PM UAE)
+        ema_200 = float(current["ema_200"])
+        ema_20 = float(current["ema_20"])
+        rsi = float(current["rsi"])
+        atr = float(current["atr"])
+
+        # 1. TIME LOCK FILTER (8:30 PM UAE / 16:30 UTC)
         current_time = datetime.utcnow() + timedelta(hours=4)
         if (current_time.hour == 20 and current_time.minute >= 30) or current_time.hour > 20:
             return {"action": "WAIT", "reason": "Paused: Time limit (8:30 PM UAE)", "entry": round(close, decimals), "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
 
-        # 2. DYNAMIC SUPPORT & RESISTANCE ENGINE (55-Period Window on 15M = ~13.75 Hours)
-        df['resistance'] = df['high'].shift(1).rolling(window=55).max()
-        df['support'] = df['low'].shift(1).rolling(window=55).min()
-        
-        resistance = float(df['resistance'].iloc[-2])
-        support = float(df['support'].iloc[-2])
-
-        # 3. BREAKOUT EXECUTION LOGIC
+        # 2. HYBRID EXECUTION LOGIC
         action = "WAIT"
-        reason = f"15M Range (55 candles): Support (${round(support, decimals)}) & Resistance (${round(resistance, decimals)})"
+        reason = f"Macro Trend: {'BULLISH' if close > ema_200 else 'BEARISH'} | 20 EMA: ${round(ema_20, decimals)} | RSI: {round(rsi, 1)}"
 
-        # BUY: 15-minute close strictly above 55-period Resistance ceiling
-        if close > resistance:
+        # BUY SETUP: 
+        # - Macro Trend is Bullish (Close > 200 EMA)
+        # - Price pulled back to or below the 20 EMA (Low <= 20 EMA)
+        # - RSI is recovering from oversold dip (< 45)
+        # - Candle closed green (Close > Open)
+        if close > ema_200 and low <= ema_20 and prev["rsi"] < 45 and close > open_price:
             action = "BUY"
-            reason = f"15M Macro Breakout! Price closed above Resistance (${round(resistance, decimals)})"
+            reason = f"15M Trend Pullback: Bullish bounce off 20 EMA (${round(ema_20, decimals)})"
 
-        # SELL: 15-minute close strictly below 55-period Support floor
-        elif close < support:
+        # SELL SETUP: 
+        # - Macro Trend is Bearish (Close < 200 EMA)
+        # - Price rallied to or above the 20 EMA (High >= 20 EMA)
+        # - RSI is rejecting from overbought spike (> 55)
+        # - Candle closed red (Close < Open)
+        elif close < ema_200 and high >= ema_20 and prev["rsi"] > 55 and close < open_price:
             action = "SELL"
-            reason = f"15M Macro Breakdown! Price closed below Support (${round(support, decimals)})"
+            reason = f"15M Trend Pullback: Bearish rejection at 20 EMA (${round(ema_20, decimals)})"
 
-        # 4. SIGNAL PACKAGING & DB LOGGING
+        # 3. SIGNAL PACKAGING & DYNAMIC ATR RISK LOGGING
         signal_id = f"{pair}_{str(candle_time)}_{action}"
         if signal_id not in signal_timestamps and action != "WAIT": 
             signal_timestamps[signal_id] = int(time.time())
@@ -93,18 +128,23 @@ def analyze_sr_breakout(data, pair: str, db: Session):
         if action == "WAIT":
             return {
                 "action": "WAIT", "entry": round(close, decimals), "sl": "-", "tp": "-", 
-                "support": round(support, decimals), "resistance": round(resistance, decimals),
+                "support": round(ema_200, decimals), "resistance": round(ema_20, decimals),
                 "reason": reason, "timestamp": 0
             }
         else:
-            sl_calc = support if action == "BUY" else resistance
-            risk_distance = abs(close - sl_calc)
-            tp_calc = close + (1.5 * risk_distance) if action == "BUY" else close - (1.5 * risk_distance)
+            # DYNAMIC RISK MANAGEMENT using ATR (Average True Range)
+            # Stop Loss = 1.5x Current Volatility
+            # Take Profit = 2.5x Current Volatility
+            sl_distance = atr * 1.5
+            tp_distance = atr * 2.5
+            
+            sl_calc = close - sl_distance if action == "BUY" else close + sl_distance
+            tp_calc = close + tp_distance if action == "BUY" else close - tp_distance
             
             signal = {
                 "action": action, "entry": round(close, decimals), "sl": round(sl_calc, decimals),
-                "tp": round(tp_calc, decimals), "support": round(support, decimals), 
-                "resistance": round(resistance, decimals), "reason": reason, "timestamp": signal_timestamps[signal_id]
+                "tp": round(tp_calc, decimals), "support": round(ema_200, decimals), 
+                "resistance": round(ema_20, decimals), "reason": reason, "timestamp": signal_timestamps[signal_id]
             }
 
             try:
@@ -117,7 +157,7 @@ def analyze_sr_breakout(data, pair: str, db: Session):
             return signal
 
     except Exception as calc_error:
-        return {"action": "WAIT", "reason": f"S&R Math Error: {str(calc_error)}", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
+        return {"action": "WAIT", "reason": f"Hybrid Math Error: {str(calc_error)}", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
 
 async def background_bot_loop():
     while True:
@@ -125,7 +165,7 @@ async def background_bot_loop():
         try:
             for pair in PAIRS:
                 df = await asyncio.to_thread(fetch_market_data, pair)
-                signal = analyze_sr_breakout(df, pair, db)
+                signal = analyze_hybrid_confluence(df, pair, db)
                 LATEST_SIGNALS[pair] = signal
         except Exception as loop_error:
             for pair in PAIRS:
