@@ -16,7 +16,6 @@ templates = Jinja2Templates(directory="templates")
 TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "YOUR_API_KEY_HERE")
 
 PAIRS = ["XAU/USD"]
-# Store signals for BOTH systems
 LATEST_SIGNALS = {
     pair: {
         "breakout": {"action": "WAIT", "reason": "Initializing 55-Candle Breakout...", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0},
@@ -179,7 +178,6 @@ async def background_bot_loop():
                 df = await asyncio.to_thread(fetch_market_data, pair)
                 brk_sig = analyze_breakout(df, pair, db)
                 pul_sig = analyze_pullback(df, pair, db)
-                # Save both signals to the dictionary simultaneously
                 LATEST_SIGNALS[pair] = {
                     "breakout": brk_sig,
                     "pullback": pul_sig
@@ -204,7 +202,7 @@ async def dashboard(request: Request):
 
 @app.get("/journal", response_class=HTMLResponse)
 async def journal_page(request: Request, db: Session = Depends(get_db)):
-    try: trades = db.query(TradeJournal).order_by(TradeJournal.timestamp.desc()).limit(50).all()
+    try: trades = db.query(TradeJournal).order_by(TradeJournal.timestamp.desc()).limit(100).all()
     except: trades = []
     return templates.TemplateResponse(request=request, name="journal.html", context={"trades": trades})
 
