@@ -12,9 +12,12 @@
             margin: 0;
             padding: 20px;
         }
-        .header { margin-bottom: 30px; }
+        .header { margin-bottom: 30px; display: flex; justify-content: space-between; align-items: center; }
         .header h1 { font-size: 28px; margin: 0 0 10px 0; }
         .header p { color: #8b95a5; margin: 0; font-size: 14px; }
+        .journal-btn {
+            background-color: #1f2937; color: #f59e0b; padding: 8px 16px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 14px;
+        }
         
         .grid-container {
             display: grid;
@@ -80,8 +83,11 @@
 <body>
 
     <div class="header">
-        <h1>XAU/USD Master Workspace</h1>
-        <p>Dual Engine Monitoring: 55-Candle Breakout vs 50/20 EMA Pullback</p>
+        <div>
+            <h1>XAU/USD Master Workspace</h1>
+            <p>Dual Engine Monitoring: 55-Candle Breakout vs 50/20 EMA Pullback</p>
+        </div>
+        <a href="/journal" class="journal-btn">View Journal</a>
     </div>
 
     <div class="grid-container">
@@ -180,7 +186,6 @@
             }
         }
 
-        // Fetch immediately on load, then loop every 30 seconds
         fetchSignals();
         setInterval(fetchSignals, 30000);
     </script>
