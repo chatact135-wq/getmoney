@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>XAU/USD Master Workspace</title>
+    <title>XAU/USD Quantitative Workspace</title>
     <style>
         body {
             background-color: #0b0f19;
@@ -12,11 +12,11 @@
             margin: 0;
             padding: 20px;
         }
-        .header { margin-bottom: 30px; display: flex; justify-content: space-between; align-items: center; }
-        .header h1 { font-size: 28px; margin: 0 0 10px 0; }
+        .header { margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; }
+        .header h1 { font-size: 26px; margin: 0 0 6px 0; }
         .header p { color: #8b95a5; margin: 0; font-size: 14px; }
         .journal-btn {
-            background-color: #1f2937; color: #f59e0b; padding: 8px 16px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 14px;
+            background-color: #1f2937; color: #f59e0b; padding: 10px 18px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 14px; border: 1px solid #374151;
         }
         
         .grid-container {
@@ -24,8 +24,11 @@
             grid-template-columns: 1fr;
             gap: 20px;
         }
-        @media (min-width: 768px) {
-            .grid-container { grid-template-columns: 1fr 1fr; }
+        @media (min-width: 900px) {
+            .grid-container { grid-template-columns: repeat(2, 1fr); }
+        }
+        @media (min-width: 1300px) {
+            .grid-container { grid-template-columns: repeat(3, 1fr); }
         }
         
         .card {
@@ -40,14 +43,14 @@
             align-items: center;
             margin-bottom: 20px;
         }
-        .card-header h2 { margin: 0; font-size: 20px; color: #f59e0b; }
+        .card-header h2 { margin: 0; font-size: 17px; color: #f59e0b; }
         
         .status-badge {
             background-color: #1f2937;
             color: #9ca3af;
             padding: 4px 10px;
             border-radius: 20px;
-            font-size: 12px;
+            font-size: 11px;
             font-weight: bold;
         }
         .status-badge.BUY { background-color: rgba(16, 185, 129, 0.2); color: #10b981; }
@@ -56,27 +59,27 @@
         .metrics-grid {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
-            gap: 15px;
-            margin-bottom: 20px;
+            gap: 10px;
+            margin-bottom: 18px;
         }
         .metric-box {
             background-color: #0b0f19;
-            padding: 15px;
+            padding: 12px 8px;
             border-radius: 8px;
             text-align: center;
         }
         .metric-label {
-            font-size: 11px;
+            font-size: 10px;
             color: #6b7280;
             text-transform: uppercase;
             letter-spacing: 0.5px;
-            margin-bottom: 8px;
+            margin-bottom: 6px;
         }
-        .metric-value { font-size: 18px; font-weight: bold; }
+        .metric-value { font-size: 16px; font-weight: bold; }
         .value-red { color: #ef4444; }
         .value-green { color: #10b981; }
         
-        .footer-info { font-size: 13px; color: #9ca3af; line-height: 1.6; }
+        .footer-info { font-size: 12px; color: #9ca3af; line-height: 1.6; }
         .footer-info span { color: #ffffff; font-weight: bold; }
     </style>
 </head>
@@ -85,84 +88,117 @@
     <div class="header">
         <div>
             <h1>XAU/USD Master Workspace</h1>
-            <p>Dual Engine Monitoring: 55-Candle Breakout vs 50/20 EMA Pullback</p>
+            <p>5-Engine Multi-Strategy Quantitative Suite</p>
         </div>
-        <a href="/journal" class="journal-btn">View Journal</a>
+        <a href="/journal" class="journal-btn">View Trade Journal →</a>
     </div>
 
     <div class="grid-container">
-        <!-- 1. Breakout System Card -->
+        <!-- System 1: Breakout -->
         <div class="card" id="card-breakout">
             <div class="card-header">
-                <h2>System 1: Breakout</h2>
+                <h2>1. 55-Candle Breakout</h2>
                 <span class="status-badge" id="badge-breakout">MONITORING</span>
             </div>
             <div class="metrics-grid">
-                <div class="metric-box">
-                    <div class="metric-label">Trigger Entry</div>
-                    <div class="metric-value" id="entry-breakout">-</div>
-                </div>
-                <div class="metric-box">
-                    <div class="metric-label">Support Floor</div>
-                    <div class="metric-value value-red" id="sl-breakout">-</div>
-                </div>
-                <div class="metric-box">
-                    <div class="metric-label">Resistance Ceiling</div>
-                    <div class="metric-value value-green" id="tp-breakout">-</div>
-                </div>
+                <div class="metric-box"><div class="metric-label">Entry</div><div class="metric-value" id="entry-breakout">-</div></div>
+                <div class="metric-box"><div class="metric-label">Floor</div><div class="metric-value value-red" id="sl-breakout">-</div></div>
+                <div class="metric-box"><div class="metric-label">Ceiling</div><div class="metric-value value-green" id="tp-breakout">-</div></div>
             </div>
             <div class="footer-info">
-                Algorithmic Reason: <span id="reason-breakout">Loading...</span><br>
-                Signal Longevity: <span id="time-breakout">Continuous Scan Active</span>
+                Reason: <span id="reason-breakout">Scanning...</span><br>
+                Longevity: <span id="time-breakout">Continuous</span>
             </div>
         </div>
 
-        <!-- 2. Pullback System Card -->
+        <!-- System 2: Pullback -->
         <div class="card" id="card-pullback">
             <div class="card-header">
-                <h2>System 2: EMA Pullback</h2>
+                <h2>2. 50/20 EMA Pullback</h2>
                 <span class="status-badge" id="badge-pullback">MONITORING</span>
             </div>
             <div class="metrics-grid">
-                <div class="metric-box">
-                    <div class="metric-label">Trigger Entry</div>
-                    <div class="metric-value" id="entry-pullback">-</div>
-                </div>
-                <div class="metric-box">
-                    <div class="metric-label">Stop Loss (ATR)</div>
-                    <div class="metric-value value-red" id="sl-pullback">-</div>
-                </div>
-                <div class="metric-box">
-                    <div class="metric-label">Take Profit</div>
-                    <div class="metric-value value-green" id="tp-pullback">-</div>
-                </div>
+                <div class="metric-box"><div class="metric-label">Entry</div><div class="metric-value" id="entry-pullback">-</div></div>
+                <div class="metric-box"><div class="metric-label">Stop Loss</div><div class="metric-value value-red" id="sl-pullback">-</div></div>
+                <div class="metric-box"><div class="metric-label">Take Profit</div><div class="metric-value value-green" id="tp-pullback">-</div></div>
             </div>
             <div class="footer-info">
-                Algorithmic Reason: <span id="reason-pullback">Loading...</span><br>
-                Signal Longevity: <span id="time-pullback">Continuous Scan Active</span>
+                Reason: <span id="reason-pullback">Scanning...</span><br>
+                Longevity: <span id="time-pullback">Continuous</span>
+            </div>
+        </div>
+
+        <!-- System 3: Fair Value Gap -->
+        <div class="card" id="card-fvg">
+            <div class="card-header">
+                <h2>3. Fair Value Gap (FVG)</h2>
+                <span class="status-badge" id="badge-fvg">MONITORING</span>
+            </div>
+            <div class="metrics-grid">
+                <div class="metric-box"><div class="metric-label">Entry</div><div class="metric-value" id="entry-fvg">-</div></div>
+                <div class="metric-box"><div class="metric-label">Stop Loss</div><div class="metric-value value-red" id="sl-fvg">-</div></div>
+                <div class="metric-box"><div class="metric-label">Take Profit</div><div class="metric-value value-green" id="tp-fvg">-</div></div>
+            </div>
+            <div class="footer-info">
+                Reason: <span id="reason-fvg">Scanning...</span><br>
+                Longevity: <span id="time-fvg">Continuous</span>
+            </div>
+        </div>
+
+        <!-- System 4: ADX + RSI -->
+        <div class="card" id="card-adx_rsi">
+            <div class="card-header">
+                <h2>4. ADX + RSI Momentum</h2>
+                <span class="status-badge" id="badge-adx_rsi">MONITORING</span>
+            </div>
+            <div class="metrics-grid">
+                <div class="metric-box"><div class="metric-label">Entry</div><div class="metric-value" id="entry-adx_rsi">-</div></div>
+                <div class="metric-box"><div class="metric-label">Stop Loss</div><div class="metric-value value-red" id="sl-adx_rsi">-</div></div>
+                <div class="metric-box"><div class="metric-label">Take Profit</div><div class="metric-value value-green" id="tp-adx_rsi">-</div></div>
+            </div>
+            <div class="footer-info">
+                Reason: <span id="reason-adx_rsi">Scanning...</span><br>
+                Longevity: <span id="time-adx_rsi">Continuous</span>
+            </div>
+        </div>
+
+        <!-- System 5: Asian Sweep -->
+        <div class="card" id="card-asian_sweep">
+            <div class="card-header">
+                <h2>5. Asian Liquidity Sweep</h2>
+                <span class="status-badge" id="badge-asian_sweep">MONITORING</span>
+            </div>
+            <div class="metrics-grid">
+                <div class="metric-box"><div class="metric-label">Entry</div><div class="metric-value" id="entry-asian_sweep">-</div></div>
+                <div class="metric-box"><div class="metric-label">Stop Loss</div><div class="metric-value value-red" id="sl-asian_sweep">-</div></div>
+                <div class="metric-box"><div class="metric-label">Take Profit</div><div class="metric-value value-green" id="tp-asian_sweep">-</div></div>
+            </div>
+            <div class="footer-info">
+                Reason: <span id="reason-asian_sweep">Scanning...</span><br>
+                Longevity: <span id="time-asian_sweep">Continuous</span>
             </div>
         </div>
     </div>
 
     <script>
+        const systems = ['breakout', 'pullback', 'fvg', 'adx_rsi', 'asian_sweep'];
+
         function updateUI(system, data) {
-            // Update Metrics
-            document.getElementById(`entry-${system}`).innerText = data.entry !== "-" ? data.entry : "-";
-            document.getElementById(`sl-${system}`).innerText = data.sl !== "-" ? data.sl : (data.support !== "-" ? data.support : "-");
-            document.getElementById(`tp-${system}`).innerText = data.tp !== "-" ? data.tp : (data.resistance !== "-" ? data.resistance : "-");
+            if (!data) return;
+            document.getElementById(`entry-${system}`).innerText = data.entry !== "-" ? `$${data.entry}` : "-";
+            document.getElementById(`sl-${system}`).innerText = data.sl !== "-" ? `$${data.sl}` : (data.support !== "-" ? `$${data.support}` : "-");
+            document.getElementById(`tp-${system}`).innerText = data.tp !== "-" ? `$${data.tp}` : (data.resistance !== "-" ? `$${data.resistance}` : "-");
             document.getElementById(`reason-${system}`).innerText = data.reason;
             
-            // Update Action Badges
             const badgeEl = document.getElementById(`badge-${system}`);
             if (data.action === "WAIT") {
                 badgeEl.innerText = "MONITORING";
                 badgeEl.className = "status-badge";
             } else {
-                badgeEl.innerText = data.action + " ENTRY";
+                badgeEl.innerText = data.action + " SIGNAL";
                 badgeEl.className = `status-badge ${data.action}`;
             }
 
-            // Update Timestamps
             if (data.timestamp === 0) {
                 document.getElementById(`time-${system}`).innerText = "Continuous Scan Active";
             } else {
@@ -178,11 +214,12 @@
                 const data = await response.json();
                 
                 if (data["XAU/USD"]) {
-                    if (data["XAU/USD"].breakout) updateUI('breakout', data["XAU/USD"].breakout);
-                    if (data["XAU/USD"].pullback) updateUI('pullback', data["XAU/USD"].pullback);
+                    systems.forEach(sys => {
+                        if (data["XAU/USD"][sys]) updateUI(sys, data["XAU/USD"][sys]);
+                    });
                 }
             } catch (error) {
-                console.error("Error fetching signal data:", error);
+                console.error("Signal fetch error:", error);
             }
         }
 
