@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>XAU/USD Trade Journal</title>
+    <title>XAU/USD Master Journal</title>
     <style>
         body {
             background-color: #0b0f19;
@@ -12,78 +12,28 @@
             margin: 0;
             padding: 20px;
         }
-        .header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 25px;
-        }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; }
         .header h1 { font-size: 26px; margin: 0; }
         .back-btn {
-            background-color: #1f2937;
-            color: #f59e0b;
-            padding: 8px 16px;
-            border-radius: 8px;
-            text-decoration: none;
-            font-weight: bold;
-            font-size: 14px;
+            background-color: #1f2937; color: #f59e0b; padding: 8px 16px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 14px; border: 1px solid #374151;
         }
         
         .filter-card {
-            background-color: #121826;
-            padding: 15px;
-            border-radius: 10px;
-            border: 1px solid #1f2937;
-            margin-bottom: 20px;
-            display: flex;
-            gap: 12px;
-            flex-wrap: wrap;
+            background-color: #121826; padding: 15px; border-radius: 10px; border: 1px solid #1f2937; margin-bottom: 20px; display: flex; gap: 12px; flex-wrap: wrap;
         }
         .filter-input, .filter-select {
-            background-color: #0b0f19;
-            border: 1px solid #374151;
-            color: #ffffff;
-            padding: 10px 14px;
-            border-radius: 6px;
-            font-size: 14px;
-            outline: none;
+            background-color: #0b0f19; border: 1px solid #374151; color: #ffffff; padding: 10px 14px; border-radius: 6px; font-size: 14px; outline: none;
         }
         .filter-input { flex-grow: 1; min-width: 200px; }
-        .filter-select { min-width: 140px; cursor: pointer; }
+        .filter-select { min-width: 150px; cursor: pointer; }
 
-        .table-container {
-            background-color: #121826;
-            border-radius: 12px;
-            border: 1px solid #1f2937;
-            overflow-x: auto;
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            text-align: left;
-            font-size: 14px;
-        }
-        th, td {
-            padding: 14px 18px;
-            border-bottom: 1px solid #1f2937;
-        }
-        th {
-            background-color: #1a2234;
-            color: #9ca3af;
-            font-weight: 600;
-            text-transform: uppercase;
-            font-size: 12px;
-            letter-spacing: 0.5px;
-        }
+        .table-container { background-color: #121826; border-radius: 12px; border: 1px solid #1f2937; overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; text-align: left; font-size: 14px; }
+        th, td { padding: 14px 18px; border-bottom: 1px solid #1f2937; }
+        th { background-color: #1a2234; color: #9ca3af; font-weight: 600; text-transform: uppercase; font-size: 12px; letter-spacing: 0.5px; }
         tr:hover { background-color: #1a233a; }
         
-        .badge {
-            padding: 4px 10px;
-            border-radius: 20px;
-            font-weight: bold;
-            font-size: 12px;
-            display: inline-block;
-        }
+        .badge { padding: 4px 10px; border-radius: 20px; font-weight: bold; font-size: 12px; display: inline-block; }
         .badge-buy { background-color: rgba(16, 185, 129, 0.2); color: #10b981; }
         .badge-sell { background-color: rgba(239, 68, 68, 0.2); color: #ef4444; }
         .time-text { color: #f59e0b; font-size: 13px; font-weight: 500; }
@@ -93,24 +43,26 @@
 <body>
 
     <div class="header">
-        <h1>Trade Execution Journal</h1>
-        <a href="/" class="back-btn">← Back to Dashboard</a>
+        <h1>Master Trade Execution Journal</h1>
+        <a href="/" class="back-btn">← Back to Workspace</a>
     </div>
 
-    <!-- Smart Filter Controls -->
     <div class="filter-card">
         <input type="text" id="searchInput" class="filter-input" placeholder="Search by reason or keyword..." onkeyup="applyFilters()">
         
         <select id="systemFilter" class="filter-select" onchange="applyFilters()">
-            <option value="ALL">All Systems</option>
-            <option value="Breakout">Breakout System</option>
-            <option value="Pullback">EMA Pullback System</option>
+            <option value="ALL">All 5 Systems</option>
+            <option value="Breakout">Breakout</option>
+            <option value="Pullback">Pullback</option>
+            <option value="Fair Value Gap">Fair Value Gap</option>
+            <option value="ADX Momentum">ADX Momentum</option>
+            <option value="Asian Sweep">Asian Sweep</option>
         </select>
 
         <select id="actionFilter" class="filter-select" onchange="applyFilters()">
             <option value="ALL">All Actions</option>
-            <option value="BUY">BUY Only</option>
-            <option value="SELL">SELL Only</option>
+            <option value="BUY">BUY Signals</option>
+            <option value="SELL">SELL Signals</option>
         </select>
     </div>
 
@@ -120,7 +72,7 @@
                 <tr>
                     <th>Time (UAE GST)</th>
                     <th>Pair</th>
-                    <th>Action / System</th>
+                    <th>Action / Strategy</th>
                     <th>Entry</th>
                     <th>Stop Loss</th>
                     <th>Take Profit</th>
@@ -130,9 +82,7 @@
             <tbody>
                 {% if trades %}
                     {% for trade in trades %}
-                        <tr class="trade-row" 
-                            data-action="{{ trade.action }}" 
-                            data-reason="{{ trade.reason }}">
+                        <tr class="trade-row" data-action="{{ trade.action }}" data-reason="{{ trade.reason }}">
                             <td class="time-text">{{ trade.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
                             <td><strong>{{ trade.pair }}</strong></td>
                             <td>
@@ -147,9 +97,7 @@
                         </tr>
                     {% endfor %}
                 {% else %}
-                    <tr id="noDataRow">
-                        <td colspan="7" class="no-data">No recorded trade signals yet.</td>
-                    </tr>
+                    <tr><td colspan="7" class="no-data">No recorded trade signals yet.</td></tr>
                 {% endif %}
             </tbody>
         </table>
@@ -164,28 +112,13 @@
 
             rows.forEach(row => {
                 const actionText = row.getAttribute('data-action') || '';
-                const reasonText = row.getAttribute('data-reason').toLowerCase() || '';
+                const reasonText = (row.getAttribute('data-reason') || '').toLowerCase();
 
-                // Check Search Input
                 const matchesSearch = reasonText.includes(searchValue) || actionText.toLowerCase().includes(searchValue);
+                const matchesSystem = systemValue === 'ALL' || actionText.includes(systemValue);
+                const matchesAction = actionValue === 'ALL' || actionText.startsWith(actionValue);
 
-                // Check System Filter
-                let matchesSystem = true;
-                if (systemValue !== 'ALL') {
-                    matchesSystem = actionText.includes(systemValue);
-                }
-
-                // Check Action Filter (BUY vs SELL)
-                let matchesAction = true;
-                if (actionValue !== 'ALL') {
-                    matchesAction = actionText.startsWith(actionValue);
-                }
-
-                if (matchesSearch && matchesSystem && matchesAction) {
-                    row.style.display = '';
-                } else {
-                    row.style.display = 'none';
-                }
+                row.style.display = (matchesSearch && matchesSystem && matchesAction) ? '' : 'none';
             });
         }
     </script>
