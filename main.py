@@ -18,7 +18,8 @@ TWELVEDATA_API_KEY = os.getenv("TWELVEDATA_API_KEY", "YOUR_API_KEY_HERE")
 
 PAIRS = ["XAU/USD"]
 
-SYSTEM_KEYS = ["breakout", "pullback", "fvg", "adx_rsi", "asian_sweep"]
+# Added the 3 new systems to the keys list
+SYSTEM_KEYS = ["breakout", "pullback", "fvg", "adx_rsi", "asian_sweep", "mss", "volume_profile", "candlesticks"]
 
 LATEST_SIGNALS = {
     pair: {
@@ -44,8 +45,17 @@ def fetch_market_data(symbol: str):
         df = pd.DataFrame(response["values"])
         df["datetime"] = pd.to_datetime(df["datetime"])
         
-        for col in ["open", "high", "low", "close"]:
+        # Ensure volume is captured if available
+        cols_to_convert = ["open", "high", "low", "close"]
+        if "volume" in df.columns:
+            cols_to_convert.append("volume")
+            
+        for col in cols_to_convert:
             df[col] = df[col].astype(float)
+            
+        # Add fallback volume if API doesn't return it
+        if "volume" not in df.columns:
+            df["volume"] = 1.0
             
         df = df.iloc[::-1].reset_index(drop=True)
         return df
@@ -177,10 +187,9 @@ def analyze_fvg(data, pair: str, db: Session):
         reason = "Scanning Price Action for Fair Value Imbalances..."
         sl, tp, supp, res = 0.0, 0.0, 0.0, 0.0
 
-        # Bullish FVG: Candle 1 High is lower than Candle 3 Low (Gap in Candle 2)
         if c3["low"] > c1["high"]:
             fvg_size = c3["low"] - c1["high"]
-            if fvg_size > (atr * 0.3):  # Significant Gap Filter
+            if fvg_size > (atr * 0.3):
                 action = "BUY"
                 supp = float(c1["high"])
                 res = float(c3["low"])
@@ -188,7 +197,6 @@ def analyze_fvg(data, pair: str, db: Session):
                 tp = close + (atr * 2.0)
                 reason = f"Bullish FVG Identified: Gap between ${round(supp, decimals)} - ${round(res, decimals)}"
 
-        # Bearish FVG: Candle 1 Low is higher than Candle 3 High
         elif c3["high"] < c1["low"]:
             fvg_size = c1["low"] - c3["high"]
             if fvg_size > (atr * 0.3):
@@ -251,7 +259,6 @@ def analyze_asian_sweep(data, pair: str, db: Session):
         df = data.copy()
         df['atr'] = calc_atr(df, 14)
         
-        # Filter Asian session candles (00:00 to 08:00 UTC)
         asian_df = df[df['datetime'].dt.hour < 8]
         if len(asian_df) < 10:
             return {"action": "WAIT", "reason": "Building Asian Session Range...", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
@@ -267,11 +274,9 @@ def analyze_asian_sweep(data, pair: str, db: Session):
         action = "WAIT"
         reason = f"Asian High: ${round(asian_high, decimals)} | Asian Low: ${round(asian_low, decimals)}"
 
-        # Liquidity Sweep Buy: Low swept Asian Low but candle closed above it
         if low < asian_low and close > asian_low and close > open_p:
             action = "BUY"
             reason = f"Liquidity Sweep: False breakdown below Asian Low (${round(asian_low, decimals)})"
-        # Liquidity Sweep Sell: High swept Asian High but candle closed below it
         elif high > asian_high and close < asian_high and close < open_p:
             action = "SELL"
             reason = f"Liquidity Sweep: False breakout above Asian High (${round(asian_high, decimals)})"
@@ -280,6 +285,146 @@ def analyze_asian_sweep(data, pair: str, db: Session):
         tp = close + (atr * 2.5) if action == "BUY" else close - (atr * 2.5)
 
         return process_signal("asian_sweep", pair, action, close, sl, tp, asian_low, asian_high, reason, candle_time, db)
+    except Exception as e:
+        return {"action": "WAIT", "reason": f"Math Error: {str(e)}", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
+
+# 6. Market Structure Shift (MSS) System
+def analyze_mss(data, pair: str, db: Session):
+    decimals = 2
+    if isinstance(data, str) or data is None or len(data) < 60:
+        return {"action": "WAIT", "reason": "Loading candles...", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
+
+    try:
+        df = data.copy()
+        df['atr'] = calc_atr(df, 14)
+        lookback = 10
+        
+        # Calculate Rolling Swing Highs and Lows
+        df['swing_high'] = df['high'].shift(1).rolling(window=lookback).max()
+        df['swing_low'] = df['low'].shift(1).rolling(window=lookback).min()
+
+        current = df.iloc[-2]
+        close = float(current['close'])
+        swing_high = float(current['swing_high'])
+        swing_low = float(current['swing_low'])
+        atr = float(current['atr'])
+        candle_time = current["datetime"]
+
+        current_time = datetime.utcnow() + timedelta(hours=4)
+        if (current_time.hour == 20 and current_time.minute >= 30) or current_time.hour > 20:
+            return {"action": "WAIT", "reason": "Paused: Time limit (8:30 PM UAE)", "entry": round(close, decimals), "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
+
+        action = "WAIT"
+        reason = f"Monitoring MSS Range: {round(swing_low, decimals)} - {round(swing_high, decimals)}"
+
+        if close > swing_high:
+            action = "BUY"
+            reason = f"Bullish MSS: Break above previous high (${round(swing_high, decimals)})"
+        elif close < swing_low:
+            action = "SELL"
+            reason = f"Bearish MSS: Break below previous low (${round(swing_low, decimals)})"
+
+        sl = close - (atr * 1.5) if action == "BUY" else close + (atr * 1.5)
+        tp = close + (atr * 2.5) if action == "BUY" else close - (atr * 2.5)
+
+        return process_signal("mss", pair, action, close, sl, tp, swing_low, swing_high, reason, candle_time, db)
+    except Exception as e:
+        return {"action": "WAIT", "reason": f"Math Error: {str(e)}", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
+
+# 7. Volume Profile System
+def analyze_volume(data, pair: str, db: Session):
+    decimals = 2
+    if isinstance(data, str) or data is None or len(data) < 60:
+        return {"action": "WAIT", "reason": "Loading candles...", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
+
+    try:
+        df = data.copy()
+        df['atr'] = calc_atr(df, 14)
+        
+        # Calculate Volume Profile over the last 50 candles
+        recent_df = df.tail(50).copy()
+        recent_df['price_bin'] = pd.cut(recent_df['close'], bins=10)
+        volume_profile = recent_df.groupby('price_bin')['volume'].sum()
+        
+        poc_bin = volume_profile.idxmax()
+        poc_mid = poc_bin.mid
+
+        current = df.iloc[-2]
+        close, low, high = float(current["close"]), float(current["low"]), float(current["high"])
+        atr = float(current["atr"])
+        candle_time = current["datetime"]
+
+        current_time = datetime.utcnow() + timedelta(hours=4)
+        if (current_time.hour == 20 and current_time.minute >= 30) or current_time.hour > 20:
+            return {"action": "WAIT", "reason": "Paused: Time limit (8:30 PM UAE)", "entry": round(close, decimals), "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
+
+        action = "WAIT"
+        reason = f"Tracking Volume Node / POC at ${round(poc_mid, decimals)}"
+
+        if low <= poc_mid and close > poc_mid:
+            action = "BUY"
+            reason = f"Bullish Defense: Rejection at Volume POC (${round(poc_mid, decimals)})"
+        elif high >= poc_mid and close < poc_mid:
+            action = "SELL"
+            reason = f"Bearish Defense: Rejection at Volume POC (${round(poc_mid, decimals)})"
+
+        sl = close - (atr * 1.5) if action == "BUY" else close + (atr * 1.5)
+        tp = close + (atr * 2.5) if action == "BUY" else close - (atr * 2.5)
+
+        return process_signal("volume_profile", pair, action, close, sl, tp, poc_mid, poc_mid, reason, candle_time, db)
+    except Exception as e:
+        return {"action": "WAIT", "reason": f"Math Error: {str(e)}", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
+
+# 8. Candlestick Patterns System
+def analyze_candlesticks(data, pair: str, db: Session):
+    decimals = 2
+    if isinstance(data, str) or data is None or len(data) < 60:
+        return {"action": "WAIT", "reason": "Loading candles...", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
+
+    try:
+        df = data.copy()
+        df['atr'] = calc_atr(df, 14)
+        
+        prev = df.iloc[-3]
+        curr = df.iloc[-2]
+
+        p_open, p_close = float(prev['open']), float(prev['close'])
+        c_open, c_close, c_high, c_low = float(curr['open']), float(curr['close']), float(curr['high']), float(curr['low'])
+        atr = float(curr['atr'])
+        candle_time = curr["datetime"]
+
+        current_time = datetime.utcnow() + timedelta(hours=4)
+        if (current_time.hour == 20 and current_time.minute >= 30) or current_time.hour > 20:
+            return {"action": "WAIT", "reason": "Paused: Time limit (8:30 PM UAE)", "entry": round(c_close, decimals), "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
+
+        body = abs(c_open - c_close)
+        lower_wick = min(c_open, c_close) - c_low
+        upper_wick = c_high - max(c_open, c_close)
+
+        action = "WAIT"
+        reason = "Scanning for institutional candle signatures..."
+
+        # Bullish Engulfing
+        if p_close < p_open and c_close > c_open and c_close > p_open and c_open <= p_close:
+            action = "BUY"
+            reason = "Candlestick: Bullish Engulfing Pattern"
+        # Bullish Pin Bar
+        elif lower_wick > (2 * body) and upper_wick < (0.5 * body):
+            action = "BUY"
+            reason = "Candlestick: Bullish Pin Bar (Strong lower rejection)"
+        # Bearish Engulfing
+        elif p_close > p_open and c_close < c_open and c_close < p_open and c_open >= p_close:
+            action = "SELL"
+            reason = "Candlestick: Bearish Engulfing Pattern"
+        # Bearish Pin Bar
+        elif upper_wick > (2 * body) and lower_wick < (0.5 * body):
+            action = "SELL"
+            reason = "Candlestick: Bearish Pin Bar (Strong upper rejection)"
+
+        sl = c_close - (atr * 1.5) if action == "BUY" else c_close + (atr * 1.5)
+        tp = c_close + (atr * 2.5) if action == "BUY" else c_close - (atr * 2.5)
+
+        return process_signal("candlesticks", pair, action, c_close, sl, tp, "-", "-", reason, candle_time, db)
     except Exception as e:
         return {"action": "WAIT", "reason": f"Math Error: {str(e)}", "entry": "-", "sl": "-", "tp": "-", "support": "-", "resistance": "-", "timestamp": 0}
 
@@ -306,9 +451,16 @@ def process_signal(sys_key, pair, action, entry, sl, tp, support, resistance, re
     if action != "WAIT":
         try:
             if last_logged_signal[sys_key].get(pair) != str(candle_time):
+                # Added new keys mapping for cleaner UI logging
                 sys_label_map = {
-                    "breakout": "Breakout", "pullback": "Pullback", 
-                    "fvg": "Fair Value Gap", "adx_rsi": "ADX Momentum", "asian_sweep": "Asian Sweep"
+                    "breakout": "Breakout", 
+                    "pullback": "Pullback", 
+                    "fvg": "Fair Value Gap", 
+                    "adx_rsi": "ADX Momentum", 
+                    "asian_sweep": "Asian Sweep",
+                    "mss": "Market Structure",
+                    "volume_profile": "Volume Profile",
+                    "candlesticks": "Candle Pattern"
                 }
                 db.add(TradeJournal(
                     pair=pair,
@@ -332,12 +484,16 @@ async def background_bot_loop():
             for pair in PAIRS:
                 df = await asyncio.to_thread(fetch_market_data, pair)
                 if not isinstance(df, str) and df is not None:
+                    # Updated loop to call all 8 engines
                     LATEST_SIGNALS[pair] = {
                         "breakout": analyze_breakout(df, pair, db),
                         "pullback": analyze_pullback(df, pair, db),
                         "fvg": analyze_fvg(df, pair, db),
                         "adx_rsi": analyze_adx_rsi(df, pair, db),
-                        "asian_sweep": analyze_asian_sweep(df, pair, db)
+                        "asian_sweep": analyze_asian_sweep(df, pair, db),
+                        "mss": analyze_mss(df, pair, db),
+                        "volume_profile": analyze_volume(df, pair, db),
+                        "candlesticks": analyze_candlesticks(df, pair, db)
                     }
         except Exception as loop_error:
             print(f"Loop error: {str(loop_error)}")
