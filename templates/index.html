@@ -88,7 +88,7 @@
     <div class="header">
         <div>
             <h1>XAU/USD Master Workspace</h1>
-            <p>5-Engine Multi-Strategy Quantitative Suite</p>
+            <p>8-Engine Multi-Strategy Quantitative Suite</p>
         </div>
         <a href="/journal" class="journal-btn">View Trade Journal →</a>
     </div>
@@ -178,10 +178,62 @@
                 Longevity: <span id="time-asian_sweep">Continuous</span>
             </div>
         </div>
+
+        <!-- System 6: Market Structure Shift -->
+        <div class="card" id="card-mss">
+            <div class="card-header">
+                <h2>6. Market Structure (MSS)</h2>
+                <span class="status-badge" id="badge-mss">MONITORING</span>
+            </div>
+            <div class="metrics-grid">
+                <div class="metric-box"><div class="metric-label">Entry</div><div class="metric-value" id="entry-mss">-</div></div>
+                <div class="metric-box"><div class="metric-label">Stop Loss</div><div class="metric-value value-red" id="sl-mss">-</div></div>
+                <div class="metric-box"><div class="metric-label">Take Profit</div><div class="metric-value value-green" id="tp-mss">-</div></div>
+            </div>
+            <div class="footer-info">
+                Reason: <span id="reason-mss">Scanning...</span><br>
+                Longevity: <span id="time-mss">Continuous</span>
+            </div>
+        </div>
+
+        <!-- System 7: Volume Profile -->
+        <div class="card" id="card-volume_profile">
+            <div class="card-header">
+                <h2>7. Volume Profile (POC)</h2>
+                <span class="status-badge" id="badge-volume_profile">MONITORING</span>
+            </div>
+            <div class="metrics-grid">
+                <div class="metric-box"><div class="metric-label">Entry</div><div class="metric-value" id="entry-volume_profile">-</div></div>
+                <div class="metric-box"><div class="metric-label">Stop Loss</div><div class="metric-value value-red" id="sl-volume_profile">-</div></div>
+                <div class="metric-box"><div class="metric-label">Take Profit</div><div class="metric-value value-green" id="tp-volume_profile">-</div></div>
+            </div>
+            <div class="footer-info">
+                Reason: <span id="reason-volume_profile">Scanning...</span><br>
+                Longevity: <span id="time-volume_profile">Continuous</span>
+            </div>
+        </div>
+
+        <!-- System 8: Candlestick Patterns -->
+        <div class="card" id="card-candlesticks">
+            <div class="card-header">
+                <h2>8. Candlestick Patterns</h2>
+                <span class="status-badge" id="badge-candlesticks">MONITORING</span>
+            </div>
+            <div class="metrics-grid">
+                <div class="metric-box"><div class="metric-label">Entry</div><div class="metric-value" id="entry-candlesticks">-</div></div>
+                <div class="metric-box"><div class="metric-label">Stop Loss</div><div class="metric-value value-red" id="sl-candlesticks">-</div></div>
+                <div class="metric-box"><div class="metric-label">Take Profit</div><div class="metric-value value-green" id="tp-candlesticks">-</div></div>
+            </div>
+            <div class="footer-info">
+                Reason: <span id="reason-candlesticks">Scanning...</span><br>
+                Longevity: <span id="time-candlesticks">Continuous</span>
+            </div>
+        </div>
     </div>
 
     <script>
-        const systems = ['breakout', 'pullback', 'fvg', 'adx_rsi', 'asian_sweep'];
+        // Updated array to include all 8 systems mapped to backend keys
+        const systems = ['breakout', 'pullback', 'fvg', 'adx_rsi', 'asian_sweep', 'mss', 'volume_profile', 'candlesticks'];
 
         function updateUI(system, data) {
             if (!data) return;
