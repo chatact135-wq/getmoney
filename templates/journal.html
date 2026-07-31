@@ -51,12 +51,16 @@
         <input type="text" id="searchInput" class="filter-input" placeholder="Search by reason or keyword..." onkeyup="applyFilters()">
         
         <select id="systemFilter" class="filter-select" onchange="applyFilters()">
-            <option value="ALL">All 5 Systems</option>
+            <!-- Updated to reflect the 8 systems -->
+            <option value="ALL">All 8 Systems</option>
             <option value="Breakout">Breakout</option>
             <option value="Pullback">Pullback</option>
             <option value="Fair Value Gap">Fair Value Gap</option>
             <option value="ADX Momentum">ADX Momentum</option>
             <option value="Asian Sweep">Asian Sweep</option>
+            <option value="Market Structure">Market Structure</option>
+            <option value="Volume Profile">Volume Profile</option>
+            <option value="Candle Pattern">Candle Pattern</option>
         </select>
 
         <select id="actionFilter" class="filter-select" onchange="applyFilters()">
